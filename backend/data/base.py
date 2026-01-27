@@ -1,89 +1,75 @@
-from pathlib import Path
+import os
+import re
 import pandas as pd
-import numpy as np
+from path import DATA_DIR
+from pathlib import Path
 
-class Dataset:
-    def __init__(self, excel_path: Path, outlier_method: str = "zscore"):
-        self.excel_path = excel_path
-        self.outlier_method = outlier_method
+class ExcelReader:
+    """
+    Read Segment Velocity and Segment Acceleration sheets
+    and inject metadata labels directly.
+    """
 
-        self.velocity_df = None
-        self.accel_df = None
+    SHEETS = ["Segment Velocity", "Segment Acceleration"]
 
-    # ---------- Public API ----------
-    def load(self):
-        self._load_sheets()
-        self._basic_clean()
-        self._report_quality()
-        return self.to_tensor()
+   
 
-    # ---------- Internal ----------
-    def _load_sheets(self):
-        xls = pd.ExcelFile(self.excel_path)
+    def _parse_metadata(self, file_path: Path) -> dict:
+        file_path = Path(file_path)
+        file_path_str = str(file_path)
 
-        if "Segment Velocity" not in xls.sheet_names:
-            raise ValueError("Missing sheet: Segment Velocity")
-
-        if "Segment Acceleration" not in xls.sheet_names:
-            raise ValueError("Missing sheet: Segment Acceleration")
-
-        self.velocity_df = pd.read_excel(
-            self.excel_path, sheet_name="Segment Velocity"
-        )
-
-        self.accel_df = pd.read_excel(
-            self.excel_path, sheet_name="Segment Acceleration"
-        )
-
-    def _basic_clean(self):
-        for df in [self.velocity_df, self.accel_df]:
-            # Sort by Frame
-            df.sort_values("Frame", inplace=True)
-
-            # Drop duplicate frames
-            df.drop_duplicates(subset="Frame", inplace=True)
-
-            # Fill missing values
-            df.interpolate(inplace=True)
-            df.ffill(inplace=True)
-            df.bfill(inplace=True)
-
-    def _report_quality(self):
-        for name, df in [
-            ("Velocity", self.velocity_df),
-            ("Acceleration", self.accel_df),
-        ]:
-            nulls = df.isnull().sum().sum()
-            if nulls > 0:
-                print(f"[WARN] {name}: {nulls} null values")
-
-            self._report_outliers(df, name)
-
-    def _report_outliers(self, df, name):
-        numeric = df.drop(columns=["Frame"], errors="ignore")
-
-        if self.outlier_method == "zscore":
-            z = (numeric - numeric.mean()) / numeric.std()
-            outliers = (np.abs(z) > 3).sum().sum()
-
-        elif self.outlier_method == "iqr":
-            q1 = numeric.quantile(0.25)
-            q3 = numeric.quantile(0.75)
-            iqr = q3 - q1
-            outliers = ((numeric < (q1 - 1.5 * iqr)) |
-                        (numeric > (q3 + 1.5 * iqr))).sum().sum()
+        # Person ID
+        if "P1" in file_path_str:
+            person_id = "P1"
+        elif "P2" in file_path_str:
+            person_id = "P2"
         else:
-            outliers = 0
+            raise ValueError("Person ID not found in path")
 
-        if outliers > 0:
-            print(f"[INFO] {name}: {outliers} outliers detected")
+        # Activity type
+        if "boning" in file_path_str.lower():
+            activity_type = "boning"
+        elif "slicing" in file_path_str.lower():
+            activity_type = "slicing"
+        else:
+            raise ValueError("Activity type not found in path")
 
-    def to_tensor(self):
-        # Drop Frame column
-        v = self.velocity_df.drop(columns=["Frame"], errors="ignore").to_numpy()
-        a = self.accel_df.drop(columns=["Frame"], errors="ignore").to_numpy()
+        # Filename
+        filename = file_path.name
+        match = re.search(r"-(\d{2,3})-", filename)
+        if not match:
+            raise ValueError(f"Sharpness score not found in {filename}")
+
+        sharpness_score = int(match.group(1))
 
         return {
-            "velocity": v,        # shape (T, Fv)
-            "acceleration": a     # shape (T, Fa)
+            "person_id": person_id,
+            "activity_type": activity_type,
+            "knife_sharpness_score": sharpness_score,
         }
+
+
+    def read_excel(self, file_path: str) -> list[pd.DataFrame]:
+        """
+        Read required sheets and return labeled DataFrames.
+        """
+        metadata = self._parse_metadata(file_path)
+        dfs = []
+
+        for sheet in self.SHEETS:
+            df = pd.read_excel(file_path, sheet_name=sheet)
+
+            # Inject labels
+            for k, v in metadata.items():
+                df[k] = v
+
+            df["sensor_type"] = sheet  
+            df["video_id"] = Path(file_path).stem
+            dfs.append(df)
+
+        return dfs
+
+if __name__ == "__main__":
+    reader = ExcelReader()
+    data_frames = reader.read_excel( DATA_DIR / "P1/Boning/MVN-J-Boning-64-001.xlsx")
+    print(data_frames[1]['video_id'])  # Example to show data read
