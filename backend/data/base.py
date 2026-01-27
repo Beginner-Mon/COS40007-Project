@@ -72,4 +72,4 @@ class ExcelReader:
 if __name__ == "__main__":
     reader = ExcelReader()
     data_frames = reader.read_excel( DATA_DIR / "P1/Boning/MVN-J-Boning-64-001.xlsx")
-    print(data_frames[1]['video_id'])  # Example to show data read
+    print(data_frames[1].head())  # Example to show data read

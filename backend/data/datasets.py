@@ -75,9 +75,27 @@ class DataLoader:
 
         print("Datasets loaded.")
         return result
+    
+    def save_csv(self, data: dict, output_dir: str = "output"):
+        """
+        Save loaded datasets to CSV files.
+        """
+        os.makedirs(output_dir, exist_ok=True)
+
+        for key, value in data.items():
+            if isinstance(value, dict):
+                for sub_key, df in value.items():
+                    path = os.path.join(output_dir, f"{key}_{sub_key}.csv")
+                    df.to_csv(path, index=False)
+            else:
+                path = os.path.join(output_dir, f"{key}.csv")
+                value.to_csv(path, index=False)
+
+        print(f"CSV files saved to '{output_dir}/'")
 
 if __name__ == "__main__":
     loader = DataLoader(combine_persons=False)
     data = loader.load()
     print(data["P1"]["boning"].head())  # Example to show loaded data
     print(data["P2"]["slicing"].head())  # Example to show loaded data
+    loader.save_csv(data, output_dir="output_data")
