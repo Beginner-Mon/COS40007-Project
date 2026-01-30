@@ -1,6 +1,6 @@
 from path import DATA_DIR
 from pathlib import Path
-from .datasets import SharpnessDataset, CutDataset
+from .loader import SharpnessDataset, CutDataset
 # CHANGE THIS if needed
 TEST_FILE = (
     DATA_DIR
