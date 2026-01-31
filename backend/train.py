@@ -1,28 +1,78 @@
+import os
 import hydra
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from pathlib import Path
-import pandas as pd
-from sklearn.preprocessing import LabelEncoder
-from torch.utils.data import DataLoader
+from datetime import datetime
 import torch
+from torch.utils.data import DataLoader
+from sklearn.preprocessing import LabelEncoder
+import pandas as pd
+
+from hydra.utils import get_original_cwd
+
 from utils.seed import set_seed
 from utils.device import get_device
-from data.preprocessing import *
+from utils.arg_parser import parse_runtime_args
+
+from data.preprocessing import (
+    get_feature_columns,
+    create_windows,
+    clean_features,
+    normalize_features,
+)
 from data.motion_dataset import MotionDataset
+from model.bilstm import BiLSTM
 from training.loss import build_loss
 from training.trainer import train_epoch
 from callbacks.early_stopping import EarlyStopping
 from callbacks.checkpoint import ModelCheckpoint
 from callbacks.lr_scheduler import ReduceLROnPlateau
-from model.bilstm import BiLSTM
 
 
-@hydra.main(config_path="configs", config_name="train")
+@hydra.main(config_path="configs", config_name="train", version_base=None)
 def main(cfg: DictConfig):
+
+    # ======================================================
+    # Runtime args (argparse)
+    # ======================================================
+    runtime_args, _ = parse_runtime_args()
+
+    run_dir = Path(os.getcwd())
+
+    # save config actually used
+    with open(run_dir / "config_used.yaml", "w") as f:
+        f.write(OmegaConf.to_yaml(cfg))
+
+    # ======================================================
+    # Setup
+    # ======================================================
     set_seed(cfg.seed)
     device = get_device(cfg.device)
 
-    df = pd.read_csv("output_data/P1_boning.csv")  # demo
+    PROJECT_ROOT = Path(get_original_cwd())
+    DATA_DIR = PROJECT_ROOT / "output_data"
+
+    # ======================================================
+    # Load data (BONING + SLICING)
+    # ======================================================
+    df_boning = pd.read_csv(DATA_DIR / "P1_boning.csv")
+    df_slicing = pd.read_csv(DATA_DIR / "P1_slicing.csv")
+
+    df = pd.concat([df_boning, df_slicing], ignore_index=True)
+
+    # filter sensor
+    df = df[df["sensor_type"] == cfg.data.sensor_type]
+
+    # optional: filter video suffix (e.g. 001)
+    if cfg.data.video_suffix is not None:
+        df = df[df["video_id"].str.endswith(cfg.data.video_suffix)]
+
+    assert df["activity_type"].nunique() > 1, \
+        "❌ Only one class left after filtering — task is invalid"
+
+    # ======================================================
+    # Windowing + preprocessing
+    # ======================================================
     feature_cols = get_feature_columns(df)
 
     X, y = create_windows(df, feature_cols, cfg.data.window_size)
@@ -32,44 +82,121 @@ def main(cfg: DictConfig):
     encoder = LabelEncoder()
     y = encoder.fit_transform(y)
 
+    # ======================================================
+    # Dataset / Loader
+    # ======================================================
     dataset = MotionDataset(X, y)
-    loader = DataLoader(dataset, cfg.data.batch_size, shuffle=True)
+    loader = DataLoader(
+        dataset,
+        batch_size=cfg.data.batch_size,
+        shuffle=True,
+        num_workers=cfg.data.num_workers,
+        pin_memory=True
+    )
 
+    # ======================================================
+    # Model / Optim / Loss
+    # ======================================================
     model = BiLSTM(
         input_size=X.shape[2],
         hidden_size=cfg.model.hidden_size,
-        num_classes=len(encoder.classes_)
+        num_classes=len(encoder.classes_),
+        num_layers=cfg.model.num_layers
     ).to(device)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=cfg.train.lr)
+    optimizer = torch.optim.Adam(
+        model.parameters(),
+        lr=cfg.train.lr,
+        weight_decay=cfg.train.weight_decay
+    )
+
     criterion, mode = build_loss(cfg.loss, len(encoder.classes_))
 
-    es = EarlyStopping(**cfg.callbacks.early_stopping) \
-        if cfg.callbacks.early_stopping.enabled else None
-
-    ckpt = ModelCheckpoint("checkpoints/best.pt") \
-        if cfg.callbacks.checkpoint.enabled else None
-
-    rlr = ReduceLROnPlateau(optimizer, **cfg.callbacks.reduce_lr) \
-        if cfg.callbacks.reduce_lr.enabled else None
-
-    for epoch in range(cfg.train.epochs):
-        loss, acc = train_epoch(
-            model, loader, optimizer,
-            criterion, device,
-            cfg.train.grad_clip, mode
+    # ======================================================
+    # Callbacks
+    # ======================================================
+    es = None
+    if cfg.callbacks.early_stopping.enabled:
+        es = EarlyStopping(
+            monitor=cfg.callbacks.early_stopping.monitor,
+            patience=cfg.callbacks.early_stopping.patience,
+            min_delta=cfg.callbacks.early_stopping.min_delta
         )
 
-        print(f"Epoch {epoch+1}: loss={loss:.4f}, acc={acc:.4f}")
+
+
+
+    ckpt = None
+    if cfg.callbacks.checkpoint.enabled:
+        ckpt = ModelCheckpoint(
+            monitor=cfg.callbacks.checkpoint.monitor,
+            save_dir=run_dir,
+            mode="max"
+        )
+
+
+    rlr = None
+    if cfg.callbacks.reduce_lr.enabled:
+        rlr = ReduceLROnPlateau(
+            optimizer=optimizer,
+            monitor=cfg.callbacks.reduce_lr.monitor,
+            factor=cfg.callbacks.reduce_lr.factor,
+            patience=cfg.callbacks.reduce_lr.patience,
+            min_lr=cfg.callbacks.reduce_lr.min_lr
+        )
+
+
+    # ======================================================
+    # Training loop
+    # ======================================================
+    for epoch in range(cfg.train.epochs):
+
+        loss, acc = train_epoch(
+            model=model,
+            loader=loader,
+            optimizer=optimizer,
+            criterion=criterion,
+            device=device,
+            grad_clip=cfg.train.grad_clip,
+            mode=mode
+        )
+
+        print(f"[{epoch+1}/{cfg.train.epochs}] "
+              f"loss={loss:.4f} | acc={acc:.4f}")
+
+        logs = {
+            "loss": loss,
+            "acc": acc,
+            "model": model
+        }
 
         if ckpt:
-            ckpt.step(acc, model)
+            ckpt.on_epoch_end(epoch, logs)
+
         if es:
-            es.step(acc)
+            es.on_epoch_end(epoch, logs)
             if es.stop:
+                print("🛑 Early stopping")
                 break
+
         if rlr:
-            rlr.step(loss)
+            rlr.on_epoch_end(epoch, logs)
+
+
+    # ======================================================
+    # Save final artifacts
+    # ======================================================
+    torch.save(
+        {
+            "model_state_dict": model.state_dict(),
+            "label_encoder": encoder,
+            "scaler": scaler,
+            "config": OmegaConf.to_container(cfg)
+        },
+        run_dir / "last_model.pt"
+    )
+
+    print(f"✅ Training finished. Artifacts saved to {run_dir}")
 
 
 if __name__ == "__main__":
