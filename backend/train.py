@@ -7,8 +7,10 @@ import torch
 from torch.utils.data import DataLoader
 from sklearn.preprocessing import LabelEncoder
 import pandas as pd
+import traceback
 
 from hydra.utils import get_original_cwd
+from hydra.core.hydra_config import HydraConfig
 
 from utils.seed import set_seed
 from utils.device import get_device
@@ -37,7 +39,7 @@ def main(cfg: DictConfig):
     # ======================================================
     runtime_args, _ = parse_runtime_args()
 
-    run_dir = Path(os.getcwd())
+    run_dir = Path(HydraConfig.get().runtime.output_dir)
 
     # save config actually used
     with open(run_dir / "config_used.yaml", "w") as f:
@@ -186,15 +188,22 @@ def main(cfg: DictConfig):
     # ======================================================
     # Save final artifacts
     # ======================================================
-    torch.save(
-        {
-            "model_state_dict": model.state_dict(),
-            "label_encoder": encoder,
-            "scaler": scaler,
-            "config": OmegaConf.to_container(cfg)
-        },
-        run_dir / "last_model.pt"
-    )
+    try:
+        save_path = run_dir / "last_model.pt"
+        print(f"Attempting to save last_model to: {save_path.resolve()}")
+        torch.save(
+            {
+                "model_state_dict": model.state_dict(),
+                "label_encoder": encoder,
+                "scaler": scaler,
+                "config": OmegaConf.to_container(cfg)
+            },
+            save_path
+        )
+        print(f"Successfully saved last_model to: {save_path.resolve()}")
+    except Exception as e:
+        print(f"Error saving last_model: {e}")
+        traceback.print_exc()
 
     print(f"✅ Training finished. Artifacts saved to {run_dir}")
 
