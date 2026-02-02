@@ -1,7 +1,7 @@
 import os
 import re
 import pandas as pd
-from path import DATA_DIR
+from non_hydra_path import DATA_DIR
 from pathlib import Path
 
 class ExcelReader:

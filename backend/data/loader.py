@@ -1,5 +1,5 @@
 import os
-from path import DATA_DIR
+from non_hydra_path import DATA_DIR
 from .base import ExcelReader
 import pandas as pd
 
