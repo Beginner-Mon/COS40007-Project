@@ -7,8 +7,8 @@ import torch
 from torch.utils.data import DataLoader
 from sklearn.preprocessing import LabelEncoder
 import pandas as pd
+import pickle
 import traceback
-
 from hydra.utils import get_original_cwd
 from hydra.core.hydra_config import HydraConfig
 
@@ -83,6 +83,10 @@ def main(cfg: DictConfig):
 
     encoder = LabelEncoder()
     y = encoder.fit_transform(y)
+
+    # Save scaler and encoder for evaluation/inference
+    pickle.dump(scaler, open(run_dir / "scaler.pkl", "wb"))
+    pickle.dump(encoder, open(run_dir / "label_encoder.pkl", "wb"))
 
     # ======================================================
     # Dataset / Loader

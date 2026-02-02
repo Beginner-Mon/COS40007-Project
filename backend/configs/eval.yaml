@@ -1,0 +1,4 @@
+seed: 42
+device: auto
+
+model_path: outputs/2026-02-02/22-46-07/best.pt  # Update this to your actual path, e.g., outputs/2024-10-15/12-34-56/best.pt
