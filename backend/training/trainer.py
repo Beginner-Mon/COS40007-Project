@@ -13,8 +13,8 @@ def train_epoch(model, loader, optimizer, criterion, device, grad_clip, mode):
         if mode == "binary":
             y = y.float().unsqueeze(1)
             loss = criterion(logits, y)
-            preds = (torch.sigmoid(logits) > 0.5).int()
-            acc = (preds == y.int()).float().mean()
+            preds = (torch.sigmoid(logits) > 0.5).view(-1).int()
+            acc = (preds == y.view(-1).int()).float().mean()
         else:
             loss = criterion(logits, y)
             preds = torch.argmax(logits, dim=1)

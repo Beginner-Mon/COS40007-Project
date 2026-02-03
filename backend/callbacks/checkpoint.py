@@ -22,6 +22,10 @@ class ModelCheckpoint(Callback):
         if self._is_better(value):
             self.best = value
             torch.save(
-                logs["model"].state_dict(),
+                {
+                    "model_state_dict": logs["model"].state_dict(),
+                    "best_metric": value,
+                    "epoch": epoch,
+                },
                 self.save_dir / "best.pt"
             )

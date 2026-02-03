@@ -1,6 +1,7 @@
 import os
 from non_hydra_path import DATA_DIR
 from .base import ExcelReader
+from .preprocessing import FEATURE_COLS
 import pandas as pd
 
 
@@ -16,6 +17,34 @@ class DataLoader:
         self.combine_persons = combine_persons
         self.reader = ExcelReader()
 
+    @staticmethod
+    def _normalize_label_columns(df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Ensure a consistent label column:
+        - If only Marker exists, rename to Label.
+        - If both exist, fill Label with Marker where missing, then drop Marker.
+        - If neither exists, create Label with NA values.
+        """
+        has_label = "Label" in df.columns
+        has_marker = "Marker" in df.columns
+
+        if has_label and has_marker:
+            df["Label"] = df["Label"].where(df["Label"].notna(), df["Marker"])
+            df = df.drop(columns=["Marker"])
+        elif has_marker and not has_label:
+            df = df.rename(columns={"Marker": "Label"})
+        elif not has_label:
+            df["Label"] = pd.NA
+
+        return df
+
+    @staticmethod
+    def _validate_feature_columns(df: pd.DataFrame) -> None:
+        missing = [c for c in FEATURE_COLS if c not in df.columns]
+        if missing:
+            missing_str = ", ".join(missing)
+            raise ValueError(f"Missing feature columns in dataset: {missing_str}")
+
     def _load_activity(self, person_dir: str, activity: str) -> pd.DataFrame:
         """
         Load and concatenate all Excel files for one activity (boning/slicing)
@@ -29,7 +58,10 @@ class DataLoader:
         for file in os.listdir(activity_path):
             if file.endswith(".xlsx"):
                 file_path = os.path.join(activity_path, file)
-                dfs.extend(self.reader.read_excel(file_path))
+                for df in self.reader.read_excel(file_path):
+                    df = self._normalize_label_columns(df)
+                    self._validate_feature_columns(df)
+                    dfs.append(df)
 
         return pd.concat(dfs, ignore_index=True)
 

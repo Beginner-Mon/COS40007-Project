@@ -129,9 +129,6 @@ def main(cfg: DictConfig):
             min_delta=cfg.callbacks.early_stopping.min_delta
         )
 
-
-
-
     ckpt = None
     if cfg.callbacks.checkpoint.enabled:
         ckpt = ModelCheckpoint(
