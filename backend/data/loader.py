@@ -21,20 +21,14 @@ class DataLoader:
     def _normalize_label_columns(df: pd.DataFrame) -> pd.DataFrame:
         """
         Ensure a consistent label column:
-        - If only Marker exists, rename to Label.
-        - If both exist, fill Label with Marker where missing, then drop Marker.
-        - If neither exists, create Label with NA values.
+        - Always drop Marker if present.
+        - Require Label to exist (base.py should populate it).
         """
-        has_label = "Label" in df.columns
-        has_marker = "Marker" in df.columns
-
-        if has_label and has_marker:
-            df["Label"] = df["Label"].where(df["Label"].notna(), df["Marker"])
+        if "Marker" in df.columns:
             df = df.drop(columns=["Marker"])
-        elif has_marker and not has_label:
-            df = df.rename(columns={"Marker": "Label"})
-        elif not has_label:
-            df["Label"] = pd.NA
+
+        if "Label" not in df.columns:
+            raise ValueError("Missing Label column in dataset (expected from base.py)")
 
         return df
 
