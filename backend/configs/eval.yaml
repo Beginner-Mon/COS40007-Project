@@ -1,7 +1,7 @@
 seed: 42
 device: auto
 
-model_path: outputs/2026-02-03/10-35-30/best.pt
+model_path: outputs/2026-02-05/08-32-56/best.pt
 
 data:
   sensor_type: "Segment Velocity"

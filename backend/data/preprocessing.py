@@ -28,6 +28,7 @@ FEATURE_COLS = [
     "Left Toe x", "Left Toe y", "Left Toe z",
 ]
 
+
 def get_feature_columns(df):
     missing = [c for c in FEATURE_COLS if c not in df.columns]
     if missing:
@@ -35,7 +36,7 @@ def get_feature_columns(df):
         raise ValueError(f"Missing feature columns: {missing_str}")
     return FEATURE_COLS
 
-def create_windows(df, feature_cols, window_size):
+def create_windows(df, feature_cols, window_size, stride=1):
     X, y = [], []
 
     for _, video_df in df.groupby("video_id"):
@@ -44,7 +45,7 @@ def create_windows(df, feature_cols, window_size):
         Xv = video_df[feature_cols].values
         yv = video_df["activity_type"].values
 
-        for i in range(len(Xv) - window_size + 1):
+        for i in range(0, len(Xv) - window_size + 1, stride):
             X.append(Xv[i:i + window_size])
             y.append(yv[i + window_size - 1])
 

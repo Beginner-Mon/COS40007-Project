@@ -77,7 +77,7 @@ def main(cfg: DictConfig):
     # ======================================================
     feature_cols = get_feature_columns(df)
 
-    X, y = create_windows(df, feature_cols, cfg.data.window_size)
+    X, y = create_windows(df, feature_cols, cfg.data.window_size, cfg.data.stride)
     X = clean_features(X)
     X, scaler = normalize_features(X)
 
