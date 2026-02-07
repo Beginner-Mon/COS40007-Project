@@ -3,7 +3,6 @@ from sklearn.preprocessing import StandardScaler
 
 # Explicit feature list to avoid column drift across files.
 FEATURE_COLS = [
-    "Pelvis x", "Pelvis y", "Pelvis z",
     "L5 x", "L5 y", "L5 z",
     "L3 x", "L3 y", "L3 z",
     "T12 x", "T12 y", "T12 z",

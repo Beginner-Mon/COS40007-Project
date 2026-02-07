@@ -5,6 +5,7 @@ from pathlib import Path
 from datetime import datetime
 import torch
 from torch.utils.data import DataLoader
+from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 import pandas as pd
 import pickle
@@ -14,7 +15,6 @@ from hydra.core.hydra_config import HydraConfig
 
 from utils.seed import set_seed
 from utils.device import get_device
-from utils.arg_parser import parse_runtime_args
 
 from data.preprocessing import (
     get_feature_columns,
@@ -25,7 +25,7 @@ from data.preprocessing import (
 from data.motion_dataset import MotionDataset
 from model.bilstm import BiLSTM
 from training.loss import build_loss
-from training.trainer import train_epoch
+from training.trainer import train_epoch, eval_epoch
 from callbacks.early_stopping import EarlyStopping
 from callbacks.checkpoint import ModelCheckpoint
 from callbacks.lr_scheduler import ReduceLROnPlateau
@@ -33,11 +33,6 @@ from callbacks.lr_scheduler import ReduceLROnPlateau
 
 @hydra.main(config_path="configs", config_name="train", version_base=None)
 def main(cfg: DictConfig):
-
-    # ======================================================
-    # Runtime args (argparse)
-    # ======================================================
-    runtime_args, _ = parse_runtime_args()
 
     run_dir = Path(HydraConfig.get().runtime.output_dir)
 
@@ -57,10 +52,21 @@ def main(cfg: DictConfig):
     # ======================================================
     # Load data (BONING + SLICING)
     # ======================================================
-    df_boning = pd.read_csv(DATA_DIR / "P1_boning.csv")
-    df_slicing = pd.read_csv(DATA_DIR / "P1_slicing.csv")
+    participant = str(cfg.data.participant).lower()
+    if participant not in ("p1", "p2", "both"):
+        raise ValueError(f"Invalid participant: {cfg.data.participant}")
+    participant_ids = ["P1", "P2"] if participant == "both" else [participant.upper()]
 
-    df = pd.concat([df_boning, df_slicing], ignore_index=True)
+    print(f"[phase=data] participant={participant} | sensor={cfg.data.sensor_type} | "
+          f"window={cfg.data.window_size} | stride={cfg.data.stride}")
+
+    dfs = []
+    for pid in participant_ids:
+        dfs.append(pd.read_csv(DATA_DIR / f"{pid}_boning.csv"))
+        dfs.append(pd.read_csv(DATA_DIR / f"{pid}_slicing.csv"))
+
+    df = pd.concat(dfs, ignore_index=True)
+    print(f"[phase=data] loaded rows={len(df)} from {', '.join(participant_ids)}")
 
     # filter sensor
     df = df[df["sensor_type"] == cfg.data.sensor_type]
@@ -73,29 +79,81 @@ def main(cfg: DictConfig):
         "❌ Only one class left after filtering — task is invalid"
 
     # ======================================================
-    # Windowing + preprocessing
+    # Split by video_id FIRST (CRITICAL FIX)
     # ======================================================
     feature_cols = get_feature_columns(df)
 
-    X, y = create_windows(df, feature_cols, cfg.data.window_size, cfg.data.stride)
-    X = clean_features(X)
-    X, scaler = normalize_features(X)
+    video_ids = df["video_id"].unique()
 
+    train_vids, val_vids = train_test_split(
+        video_ids,
+        test_size=cfg.data.val_split,
+        random_state=cfg.seed,
+    )
+
+    train_df = df[df["video_id"].isin(train_vids)].copy()
+    val_df   = df[df["video_id"].isin(val_vids)].copy()
+
+    print(f"[phase=split] train_videos={len(train_vids)} | val_videos={len(val_vids)}")
+
+    # ======================================================
+    # Create windows separately
+    # ======================================================
+    X_train, y_train = create_windows(
+        train_df,
+        feature_cols,
+        cfg.data.window_size,
+        cfg.data.stride
+    )
+
+    X_val, y_val = create_windows(
+        val_df,
+        feature_cols,
+        cfg.data.window_size,
+        cfg.data.stride
+    )
+
+    # ======================================================
+    # Clean features
+    # ======================================================
+    X_train = clean_features(X_train)
+    X_val   = clean_features(X_val)
+
+    # ======================================================
+    # Fit scaler ONLY on training data
+    # ======================================================
+    X_train, scaler = normalize_features(X_train)
+
+    X_val = scaler.transform(
+        X_val.reshape(-1, X_val.shape[-1])
+    ).reshape(X_val.shape)
+
+    print(f"[phase=preprocess] train_windows={len(X_train)} | val_windows={len(X_val)}")
+
+    # ======================================================
+    # Encode labels
+    # ======================================================
     encoder = LabelEncoder()
-    y = encoder.fit_transform(y)
 
-    # Save scaler and encoder for evaluation/inference
-    pickle.dump(scaler, open(run_dir / "scaler.pkl", "wb"))
-    pickle.dump(encoder, open(run_dir / "label_encoder.pkl", "wb"))
+    y_train = encoder.fit_transform(y_train)
+    y_val   = encoder.transform(y_val)
 
-    # ======================================================
-    # Dataset / Loader
-    # ======================================================
-    dataset = MotionDataset(X, y)
-    loader = DataLoader(
-        dataset,
+
+    train_dataset = MotionDataset(X_train, y_train)
+    val_dataset = MotionDataset(X_val, y_val)
+    print(f"[phase=split] train={len(train_dataset)} | val={len(val_dataset)}")
+
+    train_loader = DataLoader(
+        train_dataset,
         batch_size=cfg.data.batch_size,
         shuffle=True,
+        num_workers=cfg.data.num_workers,
+        pin_memory=True
+    )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=cfg.data.batch_size,
+        shuffle=False,
         num_workers=cfg.data.num_workers,
         pin_memory=True
     )
@@ -104,11 +162,14 @@ def main(cfg: DictConfig):
     # Model / Optim / Loss
     # ======================================================
     model = BiLSTM(
-        input_size=X.shape[2],
-        hidden_size=cfg.model.hidden_size,
-        num_classes=len(encoder.classes_),
-        num_layers=cfg.model.num_layers
+    input_size=X_train.shape[2],
+    hidden_size=cfg.model.hidden_size,
+    num_classes=len(encoder.classes_),
+    num_layers=cfg.model.num_layers
     ).to(device)
+
+    print(f"[phase=model] type=BiLSTM | input={X_train.shape[2]} | hidden={cfg.model.hidden_size} | "
+          f"layers={cfg.model.num_layers} | classes={len(encoder.classes_)} | device={device}")
 
     optimizer = torch.optim.Adam(
         model.parameters(),
@@ -154,9 +215,9 @@ def main(cfg: DictConfig):
     # ======================================================
     for epoch in range(cfg.train.epochs):
 
-        loss, acc = train_epoch(
+        train_loss, train_acc = train_epoch(
             model=model,
-            loader=loader,
+            loader=train_loader,
             optimizer=optimizer,
             criterion=criterion,
             device=device,
@@ -164,12 +225,23 @@ def main(cfg: DictConfig):
             mode=mode
         )
 
+        val_loss, val_acc = eval_epoch(
+            model=model,
+            loader=val_loader,
+            criterion=criterion,
+            device=device,
+            mode=mode
+        )
+
         print(f"[{epoch+1}/{cfg.train.epochs}] "
-              f"loss={loss:.4f} | acc={acc:.4f}")
+              f"train_loss={train_loss:.4f} | train_acc={train_acc:.4f} | "
+              f"val_loss={val_loss:.4f} | val_acc={val_acc:.4f}")
 
         logs = {
-            "loss": loss,
-            "acc": acc,
+            "loss": train_loss,
+            "acc": train_acc,
+            "val_loss": val_loss,
+            "val_acc": val_acc,
             "model": model
         }
 

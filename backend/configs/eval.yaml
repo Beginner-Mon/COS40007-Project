@@ -1,14 +1,17 @@
 seed: 42
 device: auto
 
-model_path: outputs/2026-02-05/08-32-56/best.pt
+model_path: models/best.pt
+artifacts_dir: artifacts/shared
 
 data:
   sensor_type: "Segment Velocity"
   video_suffix: null
-  window_size: 30
+  window_size: 60
+  stride: 30
   batch_size: 32
   num_workers: 3
+  participant: "P2"
 
 model:
   hidden_size: 128

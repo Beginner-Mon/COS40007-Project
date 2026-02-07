@@ -34,28 +34,42 @@ def main(cfg: DictConfig):
     DATA_DIR = PROJECT_ROOT / "output_data"
 
     # ======================================================
-    # Load model + artifacts (from training run)
+    # Load model + artifacts (from training run or shared dir)
     # ======================================================
     model_path = Path(cfg.model_path)
     run_dir = model_path.parent
 
-    print(f"📂 Loading artifacts from: {run_dir}")
+    artifacts_dir = None
+    if cfg.artifacts_dir:
+        artifacts_dir = Path(cfg.artifacts_dir)
+        if not artifacts_dir.is_absolute():
+            artifacts_dir = PROJECT_ROOT / artifacts_dir
 
-    with open(run_dir / "scaler.pkl", "rb") as f:
+    source_dir = artifacts_dir if artifacts_dir else run_dir
+    print(f"[artifacts] loading from: {source_dir}")
+
+    with open(source_dir / "scaler.pkl", "rb") as f:
         scaler = pickle.load(f)
 
-    with open(run_dir / "label_encoder.pkl", "rb") as f:
+    with open(source_dir / "label_encoder.pkl", "rb") as f:
         encoder = pickle.load(f)
 
     checkpoint = torch.load(model_path, map_location=device)
 
     # ======================================================
-    # Load evaluation data (P2)
+    # Load evaluation data (participant selection)
     # ======================================================
-    df_boning = pd.read_csv(DATA_DIR / "P2_boning.csv")
-    df_slicing = pd.read_csv(DATA_DIR / "P2_slicing.csv")
+    participant = str(cfg.data.participant).lower()
+    if participant not in ("p1", "p2", "both"):
+        raise ValueError(f"Invalid participant: {cfg.data.participant}")
+    participant_ids = ["P1", "P2"] if participant == "both" else [participant.upper()]
 
-    df = pd.concat([df_boning, df_slicing], ignore_index=True)
+    dfs = []
+    for pid in participant_ids:
+        dfs.append(pd.read_csv(DATA_DIR / f"{pid}_boning.csv"))
+        dfs.append(pd.read_csv(DATA_DIR / f"{pid}_slicing.csv"))
+
+    df = pd.concat(dfs, ignore_index=True)
 
     # filter sensor
     df = df[df["sensor_type"] == cfg.data.sensor_type]
@@ -65,14 +79,14 @@ def main(cfg: DictConfig):
         df = df[df["video_id"].str.endswith(cfg.data.video_suffix)]
 
     assert df["activity_type"].nunique() > 1, \
-        "❌ Only one class left after filtering — evaluation invalid"
+        "Only one class left after filtering — evaluation invalid"
 
     # ======================================================
     # Preprocessing (IDENTICAL to training)
     # ======================================================
     feature_cols = get_feature_columns(df)
 
-    X, y = create_windows(df, feature_cols, cfg.data.window_size)
+    X, y = create_windows(df, feature_cols, cfg.data.window_size, cfg.data.stride)
     X = clean_features(X)
 
     # normalize using training scaler
@@ -135,7 +149,8 @@ def main(cfg: DictConfig):
     avg_loss = total_loss / total
     acc = correct / total
 
-    print("📊 Evaluation results (P2)")
+    eval_subject = "+".join(participant_ids)
+    print(f"[eval] subject={eval_subject}")
     print(f"Loss: {avg_loss:.4f}")
     print(f"Accuracy: {acc:.4f}")
 
@@ -147,13 +162,13 @@ def main(cfg: DictConfig):
         "accuracy": float(acc),
         "num_samples": int(total),
         "checkpoint": model_path.name,
-        "eval_subject": "P2",
+        "eval_subject": eval_subject,
     }
 
-    with open(run_dir / "eval_results_P2.yaml", "w") as f:
+    with open(run_dir / f"eval_results_{eval_subject}.yaml", "w") as f:
         f.write(OmegaConf.to_yaml(results))
 
-    print(f"✅ Evaluation complete. Results saved to {run_dir}")
+    print(f"Evaluation complete. Results saved to {run_dir}")
 
 
 if __name__ == "__main__":

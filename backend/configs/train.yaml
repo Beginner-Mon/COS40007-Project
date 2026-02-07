@@ -1,6 +1,8 @@
 seed: 42
 device: auto
 
+artifacts_dir: artifacts/shared
+
 data:
   window_size: 60
   stride: 30
@@ -8,6 +10,8 @@ data:
   sensor_type: "Segment Velocity"
   video_suffix: null
   num_workers: 3
+  val_split: 0.2
+  participant: "P2" 
 
 model:
   hidden_size: 128
