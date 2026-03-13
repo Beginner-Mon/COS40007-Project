@@ -97,15 +97,43 @@ class ExcelReader:
             if "Frame" not in df.columns:
                 raise ValueError(f"Frame column not found in sheet '{sheet}'")
 
-            if "Marker" in df.columns:
-                df = df.drop(columns=["Marker"])
-            if "Label" in df.columns:
-                df = df.drop(columns=["Label"])
+            has_label = "Label" in df.columns
+            has_marker = "Marker" in df.columns
+            label_col = "Label" if has_label else ("Marker" if has_marker else None)
 
-            df["Label"] = pd.NA
-            frame_series = pd.to_numeric(df["Frame"], errors="coerce")
-            for start, end, label in marker_ranges:
-                df.loc[(frame_series >= start) & (frame_series <= end), "Label"] = label
+            use_range_labels = True
+            if label_col is not None:
+                label_series = df[label_col]
+                if label_series.isna().any():
+                    df["Label"] = label_series if label_col == "Label" else label_series.copy()
+                    frame_series = pd.to_numeric(df["Frame"], errors="coerce")
+                    for start, end, label in marker_ranges:
+                        label_value = label
+                        if isinstance(label, str):
+                            m = re.match(r"^\s*(\d+)", label)
+                            if m:
+                                label_value = int(m.group(1))
+                        mask = (frame_series >= start) & (frame_series <= end) & df["Label"].isna()
+                        df.loc[mask, "Label"] = label_value
+                    if label_col != "Label":
+                        df = df.drop(columns=[label_col])
+                    use_range_labels = False
+                else:
+                    use_range_labels = False
+                    df["Label"] = label_series
+                    if label_col != "Label":
+                        df = df.drop(columns=[label_col])
+
+            if use_range_labels:
+                if "Marker" in df.columns:
+                    df = df.drop(columns=["Marker"])
+                if "Label" in df.columns:
+                    df = df.drop(columns=["Label"])
+
+                df["Label"] = pd.NA
+                frame_series = pd.to_numeric(df["Frame"], errors="coerce")
+                for start, end, label in marker_ranges:
+                    df.loc[(frame_series >= start) & (frame_series <= end), "Label"] = label
 
             # Inject labels
             for k, v in metadata.items():
