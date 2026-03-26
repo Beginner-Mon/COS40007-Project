@@ -3,7 +3,7 @@ P1.zip
 P2
 __pycache__/
 output_data/
-
+dataset/
 models
 checkpoints
 runs
