@@ -1,4 +1,6 @@
 import os
+import argparse
+import re
 from non_hydra_path import DATA_DIR
 from .base import ExcelReader
 from .preprocessing import FEATURE_COLS
@@ -11,11 +13,25 @@ class DataLoader:
     - boning
     - slicing
     - optionally combine P1 and P2
+
+    Preprocessing/quality checks done at loader stage:
+    - enforce a consistent Label column (drop Marker),
+    - validate expected motion feature columns,
+    - concatenate per-file/per-sheet DataFrames,
+    - export CSVs using default or sheet-suffixed naming rules.
     """
 
-    def __init__(self, combine_persons: bool = True):
+    def __init__(self, combine_persons: bool = True, sheets_to_process: list[str] | None = None):
         self.combine_persons = combine_persons
-        self.reader = ExcelReader()
+        self.reader = ExcelReader(sheets_to_process=sheets_to_process)
+
+    @staticmethod
+    def _normalize_sheet_for_suffix(sheet_name: str) -> str:
+        cleaned = re.sub(r"[^a-zA-Z0-9]+", "_", sheet_name.strip().lower())
+        return cleaned.strip("_") or "sheet"
+
+    def _is_default_sheet_mode(self) -> bool:
+        return set(self.reader.sheets_to_process) == set(ExcelReader.DEFAULT_SHEETS)
 
     @staticmethod
     def _normalize_label_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -43,6 +59,10 @@ class DataLoader:
         """
         Load and concatenate all Excel files for one activity (boning/slicing)
         under one person directory.
+
+        Per DataFrame, this method applies loader-side preprocessing checks:
+        - normalize label-related columns,
+        - enforce feature schema before concatenation.
         """
         print(f"  Loading activity: {activity}...")
         
@@ -104,24 +124,76 @@ class DataLoader:
     
     def save_csv(self, data: dict, output_dir: str = "output"):
         """
-        Save loaded datasets to CSV files.
+        Save preprocessed datasets to CSV files.
+
+        Naming behavior:
+        - default sheets mode -> unsuffixed names (e.g., P1_boning.csv),
+        - custom sheets mode -> one file per sheet with sheet suffix.
         """
         os.makedirs(output_dir, exist_ok=True)
+
+        default_mode = self._is_default_sheet_mode()
 
         for key, value in data.items():
             if isinstance(value, dict):
                 for sub_key, df in value.items():
-                    path = os.path.join(output_dir, f"{key}_{sub_key}.csv")
-                    df.to_csv(path, index=False)
+                    if default_mode:
+                        path = os.path.join(output_dir, f"{key}_{sub_key}.csv")
+                        df.to_csv(path, index=False)
+                    else:
+                        for sheet in self.reader.sheets_to_process:
+                            sheet_df = df[df["sensor_type"] == sheet]
+                            suffix = self._normalize_sheet_for_suffix(sheet)
+                            path = os.path.join(output_dir, f"{key}_{sub_key}_{suffix}.csv")
+                            sheet_df.to_csv(path, index=False)
             else:
-                path = os.path.join(output_dir, f"{key}.csv")
-                value.to_csv(path, index=False)
+                if default_mode:
+                    path = os.path.join(output_dir, f"{key}.csv")
+                    value.to_csv(path, index=False)
+                else:
+                    for sheet in self.reader.sheets_to_process:
+                        sheet_df = value[value["sensor_type"] == sheet]
+                        suffix = self._normalize_sheet_for_suffix(sheet)
+                        path = os.path.join(output_dir, f"{key}_{suffix}.csv")
+                        sheet_df.to_csv(path, index=False)
 
         print(f"CSV files saved to '{output_dir}/'")
 
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Load Excel files and export processed CSVs for motion activity data."
+    )
+    parser.add_argument(
+        "--combine-persons",
+        action="store_true",
+        help="Combine P1 and P2 into single boning/slicing outputs.",
+    )
+    parser.add_argument(
+        "--sheets",
+        nargs="+",
+        default=None,
+        help=(
+            "Process only these sheet names (exclusive override). "
+            "If omitted, defaults to Segment Velocity + Segment Acceleration."
+        ),
+    )
+    parser.add_argument(
+        "--output-dir",
+        default="output_data",
+        help="Output folder for generated CSV files.",
+    )
+    return parser.parse_args()
+
 if __name__ == "__main__":
-    loader = DataLoader(combine_persons=False)
+    args = _parse_args()
+    loader = DataLoader(combine_persons=args.combine_persons, sheets_to_process=args.sheets)
+    print(f"Effective sheets: {loader.reader.sheets_to_process}")
     data = loader.load()
-    print(data["P1"]["boning"].head())  # Example to show loaded data
-    print(data["P2"]["slicing"].head())  # Example to show loaded data
-    loader.save_csv(data, output_dir="output_data")
+    if not args.combine_persons:
+        print(data["P1"]["boning"].head())  # Example to show loaded data
+        print(data["P2"]["slicing"].head())  # Example to show loaded data
+    else:
+        print(data["boning"].head())
+        print(data["slicing"].head())
+    loader.save_csv(data, output_dir=args.output_dir)

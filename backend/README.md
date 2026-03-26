@@ -46,11 +46,39 @@ Each Excel file is parsed from these sheets:
 ### 3) Dataset loading and CSV export
 `data/loader.py` loads all `.xlsx` files by person/activity, validates feature columns, concatenates DataFrames, and can save CSV outputs.
 
-The prepared CSV files are stored in `output_data/`:
+Default CSV files are stored in `output_data/`:
 - `P1_boning.csv`
 - `P1_slicing.csv`
 - `P2_boning.csv`
 - `P2_slicing.csv`
+
+`Markers` sheet is still required for labeling.
+
+#### Sheet selection behavior
+- If `--sheets` is omitted, loader processes default sheets only:
+  - `Segment Velocity`
+  - `Segment Acceleration`
+- If `--sheets` is provided, loader processes only the provided sheet list (exclusive override).
+- Provided sheets are not merged with default sheets.
+
+#### Commands
+- Default behavior (two default sheets):
+  - `python -m data.loader`
+- Process one sheet only:
+  - `python -m data.loader --sheets "Segment Velocity"`
+- Process custom sheets only:
+  - `python -m data.loader --sheets "Custom Sheet A" "Custom Sheet B"`
+
+#### Output filename rules
+- Default sheet mode (`Segment Velocity` + `Segment Acceleration`):
+  - `P1_boning.csv`, `P1_slicing.csv`, `P2_boning.csv`, `P2_slicing.csv`
+- Custom/non-default sheet mode:
+  - `P1_boning_[sheetname].csv`
+  - `P1_slicing_[sheetname].csv`
+  - `P2_boning_[sheetname].csv`
+  - `P2_slicing_[sheetname].csv`
+
+`[sheetname]` is normalized to lowercase with non-alphanumeric characters replaced by `_`.
 
 ### 4) Preprocessing used for modeling
 `data/preprocessing.py` provides:

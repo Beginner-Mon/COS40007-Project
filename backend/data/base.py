@@ -6,8 +6,12 @@ from pathlib import Path
 
 class ExcelReader:
     """
-    Read Segment Velocity and Segment Acceleration sheets
-    and inject metadata labels directly.
+    Read selected sensor sheets from each Excel file and apply preprocessing:
+    - parse person/activity/sharpness metadata from file path and filename,
+    - require and parse Markers ranges (Frame + Label),
+    - normalize labels into a single Label column,
+    - fill missing labels from marker frame ranges,
+    - inject metadata columns plus sensor_type and video_id.
     """
 
     def _load_markers(self, file_path: Path) -> list[tuple[int, int, str]]:
@@ -44,7 +48,10 @@ class ExcelReader:
 
         return ranges
 
-    SHEETS = ["Segment Velocity", "Segment Acceleration"]
+    DEFAULT_SHEETS = ["Segment Velocity", "Segment Acceleration"]
+
+    def __init__(self, sheets_to_process: list[str] | None = None):
+        self.sheets_to_process = sheets_to_process or self.DEFAULT_SHEETS
 
    
 
@@ -85,14 +92,28 @@ class ExcelReader:
 
     def read_excel(self, file_path: str) -> list[pd.DataFrame]:
         """
-        Read required sheets and return labeled DataFrames.
+        Return one preprocessed DataFrame per requested sheet.
+
+        Preprocessing done here:
+        - read each requested sheet and validate required Frame column,
+        - standardize Label values from Label/Marker sources,
+        - backfill Label by marker frame ranges when needed,
+        - add metadata columns used downstream by training/evaluation.
         """
         metadata = self._parse_metadata(file_path)
-        marker_ranges = self._load_markers(file_path)
+        try:
+            marker_ranges = self._load_markers(file_path)
+        except ValueError as exc:
+            raise ValueError(f"Markers sheet is required in '{Path(file_path).name}': {exc}") from exc
         dfs = []
 
-        for sheet in self.SHEETS:
-            df = pd.read_excel(file_path, sheet_name=sheet)
+        for sheet in self.sheets_to_process:
+            try:
+                df = pd.read_excel(file_path, sheet_name=sheet)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Requested sheet '{sheet}' not found in '{Path(file_path).name}'"
+                ) from exc
 
             if "Frame" not in df.columns:
                 raise ValueError(f"Frame column not found in sheet '{sheet}'")
