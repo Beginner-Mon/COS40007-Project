@@ -2,45 +2,49 @@ import torch
 import torch.nn as nn
 
 class BiLSTM(nn.Module):
-    def __init__(self, input_size, hidden_size, num_classes, num_layers=2, dropout=0.0):
-        super().__init__()
+    def __init__(self, input_size, hidden_size, num_classes, num_layers=1, dropout=0.4):
+        super(BiLSTM, self).__init__()
 
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
         self.num_classes = num_classes
-        self.is_binary = (num_classes == 2)
 
-        rnn_dropout = dropout if num_layers > 1 else 0.0
+        # Bidirectional LSTM layer
         self.lstm = nn.LSTM(
             input_size=input_size,
             hidden_size=hidden_size,
             num_layers=num_layers,
             batch_first=True,
             bidirectional=True,
-            dropout=rnn_dropout
+            dropout=dropout if num_layers > 1 else 0
         )
 
-        self.fc1 = nn.Linear(hidden_size * 2, 128)
-        self.fc2 = nn.Linear(128, 128)
-        
-        out_dim = 1 if self.is_binary else num_classes
-        self.fc_out = nn.Linear(128, out_dim)
-
+        # Single FC block: BN -> Linear -> Dropout -> ReLU
+        self.fc_bn = nn.BatchNorm1d(hidden_size * 2)
+        self.fc = nn.Linear(hidden_size * 2, hidden_size)
         self.dropout = nn.Dropout(dropout)
         self.relu = nn.ReLU()
 
+        # Final output layer
+        self.fc_out = nn.Linear(hidden_size, num_classes)
+
     def forward(self, x):
-        out, _ = self.lstm(x)
-        out = out[:, -1, :]                    
+        # Initialize hidden and cell states
+        h0 = torch.zeros(self.num_layers * 2, x.size(0), self.hidden_size).to(x.device)
+        c0 = torch.zeros(self.num_layers * 2, x.size(0), self.hidden_size).to(x.device)
 
-        # First block: FC(128) → Dropout → ReLU
-        out = self.fc1(out)
+        # Forward propagate LSTM
+        out, _ = self.lstm(x, (h0, c0))
+
+        # Temporal pooling over time dimension (mean pooling)
+        out = out.mean(dim=1)
+
+        # FC block
+        out = self.fc_bn(out)
+        out = self.fc(out)
         out = self.dropout(out)
         out = self.relu(out)
 
-        # Second block: FC(128) → Dropout → ReLU  (repeat)
-        out = self.fc2(out)
-        out = self.dropout(out)
-        out = self.relu(out)
-
-        # Final classification layer (no activation, returns logits)
+        # Final output layer
         out = self.fc_out(out)
         return out
