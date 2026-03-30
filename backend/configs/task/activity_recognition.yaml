@@ -1,0 +1,27 @@
+name: "activity_recognition"
+target_col: "Label"
+excluded_labels: []
+split_strategy: "holdout"
+n_splits: 1
+test_video_ids: ["MVN-J-Boning-90-004", "MVN-S-Slicing-63-001", "MVN-S-Boning-89-004"]
+label_mapping:
+  '0- Idle': 0
+  '0 - Idle': 0
+  '1- Walking': 1
+  '1 - Walking': 1
+  '2- Steeling': 2
+  '2 - Steeling': 2
+  '3- Reaching': 3
+  '3 - Reaching': 3
+  '4- Cutting': 4
+  '4 - Cutting': 4
+  '4 - Cutting (Big Pieces)': 4
+  '4 - Cutting (Big Piece)': 4
+  '4- Cutting (big piece)': 4
+  '4 - Cutting (offloading bone from Carcass)': 4
+  '5- Dropping': 8
+  '5 - Dropping': 8
+  '5 - Slicing': 5
+  '6 - Pulling': 6
+  '7 - Placing/ Manipulating': 7
+  '8 - Dropping': 8
