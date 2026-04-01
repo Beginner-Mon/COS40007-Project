@@ -1,9 +1,9 @@
 import streamlit as st
 import subprocess
-import threading
 import sys
 import os
 import time
+import urllib.request
 
 st.set_page_config(page_title="Automated ML Pipeline", layout="wide")
 
@@ -37,26 +37,41 @@ lr_str = st.sidebar.text_input("Learning Rate", "1e-4")
 
 # MLflow Dashboard
 st.subheader("📊 MLflow Tracking")
-st.write("View the realtime training progress, parameters, and loss curves below.")
+st.write("Open MLflow in a new tab to view realtime training progress, parameters, and loss curves.")
+
+mlflow_url = "http://127.0.0.1:5000"
+
+def _is_mlflow_up(url: str) -> bool:
+    try:
+        with urllib.request.urlopen(url, timeout=2) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
 
 # Launch MLflow if not running
-if 'mlflow_proc' not in st.session_state:
+if 'mlflow_proc' not in st.session_state and not _is_mlflow_up(mlflow_url):
     st.session_state.mlflow_proc = subprocess.Popen(
-        ["conda", "run", "-n", "AIE", "mlflow", "ui", "--port", "5000", "--host", "127.0.0.1"],
+        [sys.executable, "-m", "mlflow", "ui", "--port", "5000", "--host", "127.0.0.1"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         cwd=os.path.dirname(os.path.abspath(__file__))
     )
     time.sleep(2) # let it boot
 
-st.components.v1.iframe("http://127.0.0.1:5000", height=600, scrolling=True)
+is_mlflow_up = _is_mlflow_up(mlflow_url)
+
+if is_mlflow_up:
+    st.success("MLflow is running.")
+    st.link_button("Open MLflow Dashboard", mlflow_url)
+else:
+    st.warning("MLflow is not reachable on 127.0.0.1:5000 yet. Wait a few seconds and refresh.")
 
 st.sidebar.markdown("---")
 # Training Trigger
 if st.sidebar.button("🔥 Start Training Run", type="primary"):
     with st.spinner(f"Running pipeline for {selected_task}... Check terminal or MLflow for progress."):
         cmd = [
-            "conda", "run", "-n", "AIE", "python", "train.py",
+            sys.executable, "train.py",
             f"task={selected_task}",
             f"train.epochs={epochs}",
             f"data.batch_size={batch_size}",
