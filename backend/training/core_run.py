@@ -27,8 +27,9 @@ def run_training_core(X_train, y_train, X_val, y_val, cfg, label_encoder, run_di
     train_dataset = MotionDataset(X_train_scaled, y_train)
     val_dataset = MotionDataset(X_val_scaled, y_val)
 
-    train_loader = DataLoader(train_dataset, batch_size=cfg.data.batch_size, shuffle=True, pin_memory=True)
-    val_loader = DataLoader(val_dataset, batch_size=cfg.data.batch_size, shuffle=False, pin_memory=True)
+    pin_memory = str(device).startswith("cuda")
+    train_loader = DataLoader(train_dataset, batch_size=cfg.data.batch_size, shuffle=True, pin_memory=pin_memory)
+    val_loader = DataLoader(val_dataset, batch_size=cfg.data.batch_size, shuffle=False, pin_memory=pin_memory)
 
     model = BiLSTM(
         input_size=X_train.shape[2],
@@ -60,7 +61,11 @@ def run_training_core(X_train, y_train, X_val, y_val, cfg, label_encoder, run_di
                 f"fold_{fold}_val_loss": val_loss, f"fold_{fold}_val_acc": val_acc
             }, step=epoch)
 
-        print(f"[Fold {fold}] Epoch {epoch+1}/{cfg.train.epochs}: Train Loss={train_loss:.4f}, Val Loss={val_loss:.4f}, Val Acc={val_acc:.4f}")
+        print(
+            f"[Fold {fold}] Epoch {epoch+1}/{cfg.train.epochs}: "
+            f"Train Loss={train_loss:.4f}, Val Loss={val_loss:.4f}, Val Acc={val_acc:.4f}",
+            flush=True,
+        )
 
         logs = {"loss": train_loss, "acc": train_acc, "val_loss": val_loss, "val_acc": val_acc, "model": model}
         
@@ -71,7 +76,7 @@ def run_training_core(X_train, y_train, X_val, y_val, cfg, label_encoder, run_di
         if es:
             es.on_epoch_end(epoch, logs)
             if es.stop:
-                print(f"[STOP] Fold {fold} Early stopping!")
+                print(f"[STOP] Fold {fold} Early stopping!", flush=True)
                 break
         if rlr: rlr.on_epoch_end(epoch, logs)
         

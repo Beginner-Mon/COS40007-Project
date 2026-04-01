@@ -52,7 +52,7 @@ callbacks:
     min_lr: 1e-6
 
 mlflow:
-  tracking_uri: "mlruns"
+  tracking_uri: "sqlite:///mlflow_tracking.db"
 
 hydra:
   run:

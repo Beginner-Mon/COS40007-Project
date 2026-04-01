@@ -8,7 +8,7 @@ from training.core_run import run_training_core
 
 
 def run_kfold_training(X_all, y_all, window_meta_df, cfg, run_dir, label_encoder, device):
-    print(f"[START] Launching {cfg.task.n_splits}-Fold StratifiedGroupKFold Validation...")
+    print(f"[START] Launching {cfg.task.n_splits}-Fold StratifiedGroupKFold Validation...", flush=True)
     groups = window_meta_df["video_id"].astype(str).to_numpy()
     cv = StratifiedGroupKFold(n_splits=cfg.task.n_splits, shuffle=True, random_state=cfg.seed)
     folds = list(cv.split(X_all, y_all, groups=groups))
@@ -34,7 +34,7 @@ def run_kfold_training(X_all, y_all, window_meta_df, cfg, run_dir, label_encoder
             
     if mlflow.active_run():
         mlflow.log_metric("avg_val_loss", float(np.mean(fold_val_losses)))
-    print(f"[DONE] KFold finished. Avg Val Loss: {np.mean(fold_val_losses):.4f}")
+    print(f"[DONE] KFold finished. Avg Val Loss: {np.mean(fold_val_losses):.4f}", flush=True)
     
     # Save best overall
     save_path = run_dir / "best_model.pt"
@@ -44,4 +44,4 @@ def run_kfold_training(X_all, y_all, window_meta_df, cfg, run_dir, label_encoder
         "scaler": best_scaler_overall,
         "config": OmegaConf.to_container(cfg)
     }, save_path)
-    print(f"Saved best K-Fold model to {save_path.resolve()}")
+    print(f"Saved best K-Fold model to {save_path.resolve()}", flush=True)
