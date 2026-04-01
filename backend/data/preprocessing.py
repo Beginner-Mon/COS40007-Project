@@ -2,6 +2,20 @@ import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 
+def derive_sharpness_class(df):
+    """Derive 'sharpness_class' column from 'knife_sharpness_score'.
+    Bins: sharp (>=85), medium (70-84), blunt (<70).
+    """
+    if "knife_sharpness_score" not in df.columns:
+        raise ValueError("Cannot derive sharpness_class: 'knife_sharpness_score' column not found.")
+    bins = [-float("inf"), 70, 85, float("inf")]
+    labels = ["blunt", "medium", "sharp"]
+    df["sharpness_class"] = pd.cut(
+        df["knife_sharpness_score"], bins=bins, labels=labels, right=False
+    ).astype(str)
+    return df
+
+
 FEATURE_COLS = [
     "L5 x", "L5 y", "L5 z",
     "L3 x", "L3 y", "L3 z",

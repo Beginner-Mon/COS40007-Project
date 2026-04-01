@@ -23,7 +23,9 @@ class FocalLoss(nn.Module):
 def build_loss(loss_cfg, num_classes):
     mode = "multiclass" if num_classes > 2 else "binary"
     if loss_cfg.type == "focal":
-        return FocalLoss(gamma=loss_cfg.get("gamma", 2.0)), mode
+        # FocalLoss uses F.cross_entropy internally, which always expects
+        # 1-D integer targets — so always use "multiclass" mode.
+        return FocalLoss(gamma=loss_cfg.get("gamma", 2.0)), "multiclass"
     elif loss_cfg.type == "bce" or (loss_cfg.type == "auto" and num_classes == 2):
         return nn.BCEWithLogitsLoss(), "binary"
     return nn.CrossEntropyLoss(), "multiclass"

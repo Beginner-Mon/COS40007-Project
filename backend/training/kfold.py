@@ -8,7 +8,7 @@ from training.core_run import run_training_core
 
 
 def run_kfold_training(X_all, y_all, window_meta_df, cfg, run_dir, label_encoder, device):
-    print(f"🚀 Launching {cfg.task.n_splits}-Fold StratifiedGroupKFold Validation...")
+    print(f"[START] Launching {cfg.task.n_splits}-Fold StratifiedGroupKFold Validation...")
     groups = window_meta_df["video_id"].astype(str).to_numpy()
     cv = StratifiedGroupKFold(n_splits=cfg.task.n_splits, shuffle=True, random_state=cfg.seed)
     folds = list(cv.split(X_all, y_all, groups=groups))
@@ -34,7 +34,7 @@ def run_kfold_training(X_all, y_all, window_meta_df, cfg, run_dir, label_encoder
             
     if mlflow.active_run():
         mlflow.log_metric("avg_val_loss", float(np.mean(fold_val_losses)))
-    print(f"✅ KFold finished. Avg Val Loss: {np.mean(fold_val_losses):.4f}")
+    print(f"[DONE] KFold finished. Avg Val Loss: {np.mean(fold_val_losses):.4f}")
     
     # Save best overall
     save_path = run_dir / "best_model.pt"

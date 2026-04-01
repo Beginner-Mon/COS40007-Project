@@ -71,7 +71,7 @@ def run_training_core(X_train, y_train, X_val, y_val, cfg, label_encoder, run_di
         if es:
             es.on_epoch_end(epoch, logs)
             if es.stop:
-                print(f"🛑 Fold {fold} Early stopping!")
+                print(f"[STOP] Fold {fold} Early stopping!")
                 break
         if rlr: rlr.on_epoch_end(epoch, logs)
         

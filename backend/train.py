@@ -20,7 +20,8 @@ from data.preprocessing import (
     clean_features,
     merge_velocity_and_acceleration,
     engineer_features,
-    pad_windows_to_60
+    pad_windows_to_60,
+    derive_sharpness_class
 )
 
 # Import our newly decoupled modules
@@ -71,13 +72,17 @@ def main(cfg: DictConfig):
     if excluded:
         merged_df = merged_df[~merged_df["Label"].isin(excluded)].copy()
 
-    # Dynamic target col
+    # Derive sharpness_class if needed by this task
     TARGET_COL = cfg.task.target_col
+    if TARGET_COL == "sharpness_class" and "sharpness_class" not in merged_df.columns:
+        merged_df = derive_sharpness_class(merged_df)
+
+    # Dynamic target col
     if TARGET_COL in merged_df.columns and pd.api.types.is_string_dtype(merged_df[TARGET_COL]):
         merged_df[TARGET_COL] = merged_df[TARGET_COL].astype(str).str.strip().str.lower()
     
     if TARGET_COL not in merged_df.columns:
-        raise ValueError(f"Target column '{TARGET_COL}' not found in dataframe.")
+        raise ValueError(f"Target column '{TARGET_COL}' not found in dataframe. Available columns: {list(merged_df.columns)}")
 
     # 3. Engineer Features
     merged_df, feature_cols = engineer_features(merged_df, base_feature_cols)

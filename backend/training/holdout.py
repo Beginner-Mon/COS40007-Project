@@ -6,7 +6,7 @@ from training.core_run import run_training_core
 
 
 def run_holdout_training(X_all, y_all, window_meta_df, cfg, run_dir, label_encoder, device):
-    print("🚀 Launching Holdout (Train/Test Split) Validation...")
+    print("[START] Launching Holdout (Train/Test Split) Validation...")
     test_vids = list(cfg.task.get("test_video_ids", []))
     if not test_vids:
         raise ValueError("Holdout strategy selected but 'test_video_ids' is missing or empty in configuration.")
@@ -26,7 +26,7 @@ def run_holdout_training(X_all, y_all, window_meta_df, cfg, run_dir, label_encod
     
     if mlflow.active_run():
         mlflow.log_metric("val_loss", float(val_loss))
-    print(f"✅ Holdout finished. Best Val Loss: {val_loss:.4f}")
+    print(f"[DONE] Holdout finished. Best Val Loss: {val_loss:.4f}")
 
     save_path = run_dir / "best_model.pt"
     torch.save({
