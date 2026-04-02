@@ -1,0 +1,82 @@
+# ====================== SETUP & IMPORTS ======================
+from pathlib import Path
+import sys
+import numpy as np
+import pandas as pd
+import torch
+from torch.utils.data import DataLoader
+from sklearn.model_selection import StratifiedGroupKFold, train_test_split
+from sklearn.preprocessing import LabelEncoder
+
+from utils.seed import set_seed
+from utils.device import get_device
+from data.preprocessing import create_windows, clean_features
+from data.motion_dataset import MotionDataset
+
+# Config
+seed = 42
+device = get_device("auto")
+set_seed(seed)
+
+sensor_types = ["Segment Velocity", "Segment Acceleration"]
+window_size = 90          # Increased a bit for better rolling stats
+stride = 45
+batch_size = 32
+num_workers = 0
+val_split = 0.2
+n_folds = 10
+
+print(f"[setup] Using device: {device}")
+
+---
+
+print(f"[phase=cv] Starting {n_folds}-fold training")
+
+sgkf = StratifiedGroupKFold(n_splits=n_folds, shuffle=True, random_state=seed)
+
+oof_pred = []
+oof_true = []
+cv_fold_metrics = []
+
+for fold_idx, (train_idx, val_idx) in enumerate(sgkf.split(p1_df, p1_df["target"], groups=p1_df["video_id"])):
+    print(f"\n=== Fold {fold_idx+1}/{n_folds} ===")
+    
+    train_df = p1_df.iloc[train_idx].reset_index(drop=True)
+    val_df = p1_df.iloc[val_idx].reset_index(drop=True)
+    
+    # Create windows - now safe because feature_cols are strings
+    X_train, y_train = create_windows(train_df, feature_cols, "target", window_size, stride)
+    X_val, y_val = create_windows(val_df, feature_cols, "target", window_size, stride)
+    
+    train_dataset = MotionDataset(X_train, y_train)
+    val_dataset = MotionDataset(X_val, y_val)
+    
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+    
+    # === Your model, optimizer, training loop here ===
+    # model = YourModel(len(feature_cols), num_classes).to(device)
+    # ... train ...
+    
+    # After training, collect OOF
+    model.eval()
+    fold_preds = []
+    fold_targets = []
+    with torch.no_grad():
+        for xb, yb in val_loader:
+            xb = xb.to(device)
+            logits = model(xb)
+            preds = torch.argmax(logits, dim=1).cpu().numpy()
+            fold_preds.append(preds)
+            fold_targets.append(yb.numpy())
+    
+    oof_pred.append(np.concatenate(fold_preds))
+    oof_true.append(np.concatenate(fold_targets))
+    
+    cv_fold_metrics.append({
+        "fold": fold_idx + 1,
+        "train_windows": len(X_train),
+        "val_windows": len(X_val),
+    })
+
+print("\n[phase=cv] Finished.")

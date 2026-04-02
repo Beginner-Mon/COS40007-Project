@@ -45,16 +45,14 @@ val_split = 0.2
 print("[phase=data] loading P1 + P2 datasets")
 DATA_DIR = PROJECT_ROOT / "output_data"
 
-# P1 source
+# P1 source (only slicing)
 p1_dfs = [
-    pd.read_csv(DATA_DIR / "P1_boning.csv"),
     pd.read_csv(DATA_DIR / "P1_slicing.csv"),
 ]
 p1_raw_df = pd.concat(p1_dfs, ignore_index=True)
 
-# P2 source
+# P2 source (only slicing)
 p2_dfs = [
-    pd.read_csv(DATA_DIR / "P2_boning.csv"),
     pd.read_csv(DATA_DIR / "P2_slicing.csv"),
 ]
 p2_raw_df = pd.concat(p2_dfs, ignore_index=True)
@@ -630,7 +628,7 @@ y_all = label_encoder.fit_transform(y_windows).astype(np.int64)
 unique_groups = np.unique(groups)
 assert len(unique_groups) >= 10, f"Need at least 10 unique video_id groups, found {len(unique_groups)}"
 
-cv = StratifiedGroupKFold(n_splits=10, shuffle=True, random_state=42)
+cv = StratifiedGroupKFold(n_splits=2, shuffle=True, random_state=42)
 fold_splits = list(cv.split(X_all, y_all, groups=groups))
 
 print(f"[phase=split] X_all shape: {X_all.shape}")
@@ -770,7 +768,7 @@ dropout = 0.4
 learning_rate = 1e-4
 weight_decay = 1e-5
 batch_size = 32
-num_epochs = 30
+num_epochs = 1
 early_stopping_patience = 10
 
 print(f"[phase=model] CV params: input_size={input_size}, hidden_size={hidden_size}, num_layers={num_layers}, num_classes={num_classes}")
