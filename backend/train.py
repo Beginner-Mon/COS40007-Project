@@ -21,7 +21,8 @@ from data.preprocessing import (
     merge_velocity_and_acceleration,
     engineer_features,
     pad_windows_to_60,
-    derive_sharpness_class
+    derive_sharpness_class,
+    apply_activity_label_overrides,
 )
 
 # Import our newly decoupled modules
@@ -87,6 +88,25 @@ def main(cfg: DictConfig):
         if excluded:
             merged_df = merged_df[~merged_df["Label"].isin(excluded)].copy()
 
+        # Optional activity-specific remaps (task-scoped).
+        activity_overrides_cfg = cfg.task.get("activity_label_overrides")
+        if activity_overrides_cfg and bool(activity_overrides_cfg.get("enabled", False)):
+            override_target_col = activity_overrides_cfg.get("target_col", "Label")
+            override_activity_col = activity_overrides_cfg.get("activity_col", "activity_type")
+            by_activity_cfg = activity_overrides_cfg.get("by_activity", {})
+            by_activity = OmegaConf.to_container(by_activity_cfg, resolve=True)
+
+            merged_df, override_counts = apply_activity_label_overrides(
+                merged_df,
+                target_col=override_target_col,
+                by_activity=by_activity,
+                activity_col=override_activity_col,
+            )
+            if override_counts:
+                print("[phase=data] activity label overrides applied:", flush=True)
+                for rule_name, changed in sorted(override_counts.items()):
+                    print(f"  {rule_name}: {changed}", flush=True)
+
         # Derive sharpness_class if needed by this task
         TARGET_COL = cfg.task.target_col
         if TARGET_COL == "sharpness_class" and "sharpness_class" not in merged_df.columns:
@@ -102,6 +122,14 @@ def main(cfg: DictConfig):
         # 3. Engineer Features
         merged_df, feature_cols = engineer_features(merged_df, base_feature_cols)
 
+        # Optional per-label/target dynamic window rules.
+        label_specific_rules = {}
+        task_windowing_cfg = cfg.task.get("windowing")
+        if task_windowing_cfg:
+            rules_cfg = task_windowing_cfg.get("label_specific_rules", {})
+            if rules_cfg:
+                label_specific_rules = OmegaConf.to_container(rules_cfg, resolve=True)
+
         # 4. Create Windows
         X_windows, y_windows, window_meta_df = create_windows(
             merged_df, 
@@ -109,10 +137,14 @@ def main(cfg: DictConfig):
             cfg.data.window_size, 
             cfg.data.stride,
             TARGET_COL,
-            frame_skip_step=cfg.data.get("frame_skip_step", 2)
+            frame_skip_step=cfg.data.get("frame_skip_step", 2),
+            label_specific_rules=label_specific_rules,
         )
 
-        X_all = pad_windows_to_60(X_windows, target_len=60).astype(np.float32)
+        X_all = pad_windows_to_60(
+            X_windows,
+            target_len=int(cfg.data.get("pad_target_len", 60)),
+        ).astype(np.float32)
         y_windows = np.array(y_windows, dtype=object)
 
         label_encoder = LabelEncoder()
@@ -122,6 +154,14 @@ def main(cfg: DictConfig):
         X_all = clean_features(X_all)
 
         print(f"[phase=data] Total Windows Generated: {len(X_all)}", flush=True)
+        if not window_meta_df.empty and {"target", "window_size", "window_stride", "frame_skip_step"}.issubset(window_meta_df.columns):
+            print("[phase=data] effective window settings by target:", flush=True)
+            settings_by_target = (
+                window_meta_df[["target", "window_size", "window_stride", "frame_skip_step"]]
+                .drop_duplicates()
+                .sort_values("target")
+            )
+            print(settings_by_target.to_string(index=False), flush=True)
 
         # ======================================================
         # Delegate to Specialized Validation Strategy Modules

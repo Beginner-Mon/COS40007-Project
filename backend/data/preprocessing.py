@@ -16,6 +16,65 @@ def derive_sharpness_class(df):
     return df
 
 
+def apply_activity_label_overrides(
+    df,
+    target_col="Label",
+    by_activity=None,
+    activity_col="activity_type",
+):
+    """Apply optional activity-specific label remapping rules.
+
+    Args:
+        df: Input dataframe.
+        target_col: Column to remap.
+        by_activity: Dict in the form:
+            {
+                "boning": {5: 8},
+                "slicing": {8: 5},
+            }
+        activity_col: Activity column used to scope remaps.
+
+    Returns:
+        Tuple of (updated_df, applied_counts).
+        applied_counts is a dict keyed by "activity:src->dst" with changed row counts.
+    """
+    if not by_activity:
+        return df, {}
+
+    if target_col not in df.columns or activity_col not in df.columns:
+        return df, {}
+
+    out_df = df.copy()
+    applied_counts = {}
+    activity_series = out_df[activity_col].astype(str).str.strip().str.lower()
+
+    for activity_name, label_map in by_activity.items():
+        if not isinstance(label_map, dict):
+            continue
+
+        activity_key = str(activity_name).strip().lower()
+        activity_mask = activity_series.eq(activity_key)
+        if not activity_mask.any():
+            continue
+
+        for src_label, dst_label in label_map.items():
+            try:
+                src_value = int(src_label)
+                dst_value = int(dst_label)
+            except (TypeError, ValueError):
+                continue
+
+            remap_mask = activity_mask & out_df[target_col].eq(src_value)
+            changed = int(remap_mask.sum())
+            if changed == 0:
+                continue
+
+            out_df.loc[remap_mask, target_col] = dst_value
+            applied_counts[f"{activity_key}:{src_value}->{dst_value}"] = changed
+
+    return out_df, applied_counts
+
+
 FEATURE_COLS = [
     "L5 x", "L5 y", "L5 z",
     "L3 x", "L3 y", "L3 z",
@@ -183,7 +242,70 @@ def engineer_features(combined_df, base_feature_cols):
     )
     return combined_df, feature_cols
 
-def create_windows(df, feature_cols, window_size, stride, target_col, frame_skip_step=2):
+def create_windows(
+    df,
+    feature_cols,
+    window_size,
+    stride,
+    target_col="Label",
+    frame_skip_step=2,
+    label_specific_rules=None,
+):
+    if len(df) == 0:
+        raise ValueError("Cannot create windows from an empty dataframe.")
+
+    default_window_size = int(window_size)
+    default_stride = int(stride)
+    default_frame_skip_step = int(frame_skip_step)
+
+    if default_window_size <= 0:
+        raise ValueError(f"window_size must be > 0, got {default_window_size}")
+    if default_stride <= 0:
+        raise ValueError(f"stride must be > 0, got {default_stride}")
+    if default_frame_skip_step <= 0:
+        raise ValueError(f"frame_skip_step must be > 0, got {default_frame_skip_step}")
+
+    label_specific_rules = label_specific_rules or {}
+
+    def _resolve_window_params(target_value):
+        params = {
+            "window_size": default_window_size,
+            "window_stride": default_stride,
+            "frame_skip_step": default_frame_skip_step,
+        }
+
+        target_key = str(target_value).strip().lower()
+        selected_rule = None
+        for rule_key, rule_value in label_specific_rules.items():
+            if str(rule_key).strip().lower() == target_key:
+                selected_rule = rule_value
+                break
+
+        if isinstance(selected_rule, dict):
+            if "window_size" in selected_rule:
+                params["window_size"] = int(selected_rule["window_size"])
+            if "window_stride" in selected_rule:
+                params["window_stride"] = int(selected_rule["window_stride"])
+            elif "stride" in selected_rule:
+                params["window_stride"] = int(selected_rule["stride"])
+            if "frame_skip_step" in selected_rule:
+                params["frame_skip_step"] = int(selected_rule["frame_skip_step"])
+
+        if params["window_size"] <= 0:
+            raise ValueError(
+                f"window_size must be > 0 for target '{target_value}', got {params['window_size']}"
+            )
+        if params["window_stride"] <= 0:
+            raise ValueError(
+                f"window_stride must be > 0 for target '{target_value}', got {params['window_stride']}"
+            )
+        if params["frame_skip_step"] <= 0:
+            raise ValueError(
+                f"frame_skip_step must be > 0 for target '{target_value}', got {params['frame_skip_step']}"
+            )
+
+        return params
+
     df = df.sort_values(["video_id", "Frame"]).reset_index(drop=True)
     runs = []
     
@@ -215,31 +337,66 @@ def create_windows(df, feature_cols, window_size, stride, target_col, frame_skip
     window_meta = []
     
     for run_idx, run in enumerate(runs):
+        params = _resolve_window_params(run["target"])
+        run_window_size = params["window_size"]
+        run_window_stride = params["window_stride"]
+        run_frame_skip_step = params["frame_skip_step"]
+
         run_indices = np.arange(run["start_idx"], run["end_idx"] + 1)
-        sampled_indices = run_indices[::frame_skip_step]
+        sampled_indices = run_indices[::run_frame_skip_step]
         if len(sampled_indices) == 0:
             continue
         
-        if len(sampled_indices) <= window_size:
+        if len(sampled_indices) <= run_window_size:
             idx_chunk = sampled_indices
             X_windows.append(df.iloc[idx_chunk][feature_cols].to_numpy())
             y_windows.append(run["target"])
-            window_meta.append({"video_id": run["video_id"]})
+            window_meta.append(
+                {
+                    "video_id": run["video_id"],
+                    "target": run["target"],
+                    "run_idx": run_idx,
+                    "window_len": int(len(idx_chunk)),
+                    "window_size": run_window_size,
+                    "window_stride": run_window_stride,
+                    "frame_skip_step": run_frame_skip_step,
+                }
+            )
             continue
 
-        starts = list(range(0, len(sampled_indices) - window_size + 1, stride))
+        starts = list(range(0, len(sampled_indices) - run_window_size + 1, run_window_stride))
         for start in starts:
-            idx_chunk = sampled_indices[start:start + window_size]
+            idx_chunk = sampled_indices[start:start + run_window_size]
             X_windows.append(df.iloc[idx_chunk][feature_cols].to_numpy())
             y_windows.append(run["target"])
-            window_meta.append({"video_id": run["video_id"]})
+            window_meta.append(
+                {
+                    "video_id": run["video_id"],
+                    "target": run["target"],
+                    "run_idx": run_idx,
+                    "window_len": int(len(idx_chunk)),
+                    "window_size": run_window_size,
+                    "window_stride": run_window_stride,
+                    "frame_skip_step": run_frame_skip_step,
+                }
+            )
 
-        last_covered = starts[-1] + window_size
+        last_covered = starts[-1] + run_window_size
         if last_covered < len(sampled_indices):
             idx_chunk = sampled_indices[last_covered:]
             X_windows.append(df.iloc[idx_chunk][feature_cols].to_numpy())
             y_windows.append(run["target"])
-            window_meta.append({"video_id": run["video_id"]})
+            window_meta.append(
+                {
+                    "video_id": run["video_id"],
+                    "target": run["target"],
+                    "run_idx": run_idx,
+                    "window_len": int(len(idx_chunk)),
+                    "window_size": run_window_size,
+                    "window_stride": run_window_stride,
+                    "frame_skip_step": run_frame_skip_step,
+                }
+            )
             
     return X_windows, y_windows, pd.DataFrame(window_meta)
 

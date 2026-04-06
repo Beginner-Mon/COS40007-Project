@@ -84,6 +84,7 @@ Default CSV files are stored in `output_data/`:
 `data/preprocessing.py` provides:
 - fixed feature contract (`FEATURE_COLS`),
 - window generation by `video_id` (`create_windows`),
+- optional activity-specific label remapping (`apply_activity_label_overrides`),
 - NaN/inf cleanup (`clean_features`),
 - normalization with `StandardScaler` (`normalize_features`).
 
@@ -92,10 +93,26 @@ Default CSV files are stored in `output_data/`:
 - filters by `sensor_type` (default: `Segment Velocity`),
 - splits by `video_id` (not by frame) to reduce leakage,
 - windows the sequences,
+- can apply task-scoped activity overrides (for example, boning `Label=5 -> 8`),
+- can apply task-scoped label-specific window rules (`window_size`, `window_stride`, `frame_skip_step`),
 - fits scaler on train windows and applies to val windows,
 - label-encodes targets,
 - trains BiLSTM using config in `configs/train.yaml`,
 - saves run outputs in `outputs/...` and shared artifacts in `artifacts/shared/`.
+
+### Task-scoped dynamic window config
+Dynamic windows are optional and configured per task YAML under `configs/task/`:
+
+- `activity_label_overrides.enabled`: enable/disable activity-specific remaps.
+- `activity_label_overrides.by_activity`: per-activity remap dict.
+- `windowing.label_specific_rules`: per-label target rules.
+
+Global defaults remain under `configs/train.yaml`:
+
+- `data.window_size`
+- `data.stride`
+- `data.frame_skip_step`
+- `data.pad_target_len`
 
 `eval.py`:
 - loads model checkpoint + saved scaler/label encoder,

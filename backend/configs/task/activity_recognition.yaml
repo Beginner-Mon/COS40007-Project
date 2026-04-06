@@ -4,6 +4,42 @@ excluded_labels: []
 split_strategy: "holdout"
 n_splits: 1
 test_video_ids: ["MVN-J-Boning-90-004", "MVN-S-Slicing-63-001", "MVN-S-Boning-89-004"]
+
+activity_label_overrides:
+  enabled: true
+  activity_col: "activity_type"
+  target_col: "Label"
+  by_activity:
+    boning:
+      5: 8
+
+windowing:
+  label_specific_rules:
+    0:
+      window_size: 60
+      window_stride: 30
+      frame_skip_step: 2
+    4:
+      window_size: 60
+      window_stride: 30
+      frame_skip_step: 3
+    5:
+      window_size: 60
+      window_stride: 20
+      frame_skip_step: 1
+    6:
+      window_size: 60
+      window_stride: 15
+      frame_skip_step: 1
+    7:
+      window_size: 60
+      window_stride: 20
+      frame_skip_step: 1
+    8:
+      window_size: 60
+      window_stride: 20
+      frame_skip_step: 2
+
 label_mapping:
   '0- Idle': 0
   '0 - Idle': 0

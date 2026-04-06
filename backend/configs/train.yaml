@@ -10,6 +10,7 @@ artifacts_dir: artifacts/shared
 data:
   window_size: 60
   stride: 30
+  pad_target_len: 60
   batch_size: 32
   sensor_type: "Segment Velocity"
   video_suffix: null

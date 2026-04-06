@@ -5,6 +5,8 @@ import mlflow
 
 from data.motion_dataset import MotionDataset
 from model.bilstm import BiLSTM
+from model.gru import GRU
+from model.tcn import TCN
 from training.loss import build_loss
 from training.trainer import train_epoch, eval_epoch
 from callbacks.early_stopping import EarlyStopping
@@ -31,13 +33,19 @@ def run_training_core(X_train, y_train, X_val, y_val, cfg, label_encoder, run_di
     train_loader = DataLoader(train_dataset, batch_size=cfg.data.batch_size, shuffle=True, pin_memory=pin_memory)
     val_loader = DataLoader(val_dataset, batch_size=cfg.data.batch_size, shuffle=False, pin_memory=pin_memory)
 
-    model = BiLSTM(
-        input_size=X_train.shape[2],
-        hidden_size=cfg.model.hidden_size,
-        num_classes=len(label_encoder.classes_),
-        num_layers=cfg.model.num_layers,
-        dropout=cfg.model.dropout
-    ).to(device)
+    num_classes = len(label_encoder.classes_)
+    in_size = X_train.shape[2]
+    h_size = cfg.model.hidden_size
+    n_layers = cfg.model.num_layers
+    drop = cfg.model.dropout
+    mtype = cfg.model.get("type", "bilstm").lower()
+
+    if mtype == "gru":
+        model = GRU(input_size=in_size, hidden_size=h_size, num_classes=num_classes, num_layers=n_layers, dropout=drop).to(device)
+    elif mtype == "tcn":
+        model = TCN(input_size=in_size, hidden_size=h_size, num_classes=num_classes, num_layers=n_layers, dropout=drop).to(device)
+    else:
+        model = BiLSTM(input_size=in_size, hidden_size=h_size, num_classes=num_classes, num_layers=n_layers, dropout=drop).to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg.train.lr, weight_decay=cfg.train.weight_decay)
     criterion, mode = build_loss(cfg.loss, len(label_encoder.classes_))
