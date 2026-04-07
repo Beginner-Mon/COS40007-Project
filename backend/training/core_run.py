@@ -59,6 +59,7 @@ def run_training_core(X_train, y_train, X_val, y_val, cfg, label_encoder, run_di
         rlr = ReduceLROnPlateau(optimizer=optimizer, monitor=cfg.callbacks.reduce_lr.monitor, factor=cfg.callbacks.reduce_lr.factor, patience=cfg.callbacks.reduce_lr.patience, min_lr=cfg.callbacks.reduce_lr.min_lr)
 
     best_val_loss = float('inf')
+    best_val_acc = 0.0
     for epoch in range(cfg.train.epochs):
         train_loss, train_acc = train_epoch(model, train_loader, optimizer, criterion, device, cfg.train.grad_clip, mode)
         val_loss, val_acc = eval_epoch(model, val_loader, criterion, device, mode)
@@ -79,6 +80,7 @@ def run_training_core(X_train, y_train, X_val, y_val, cfg, label_encoder, run_di
         
         if val_loss < best_val_loss:
             best_val_loss = val_loss
+            best_val_acc = val_acc
         
         if ckpt: ckpt.on_epoch_end(epoch, logs)
         if es:
@@ -88,4 +90,4 @@ def run_training_core(X_train, y_train, X_val, y_val, cfg, label_encoder, run_di
                 break
         if rlr: rlr.on_epoch_end(epoch, logs)
         
-    return best_val_loss, model, scaler
+    return best_val_loss, best_val_acc, model, scaler

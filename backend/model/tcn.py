@@ -63,7 +63,6 @@ class TCN(nn.Module):
         super(TCN, self).__init__()
         
         self.num_classes = num_classes
-        self.is_binary = (num_classes == 2)
         
         # Determine num_channels based on hidden_size and num_layers
         num_channels = [hidden_size] * num_layers
@@ -72,8 +71,7 @@ class TCN(nn.Module):
         self.fc1 = nn.Linear(hidden_size, 128)
         self.fc2 = nn.Linear(128, 128)
         
-        out_dim = 1 if self.is_binary else num_classes
-        self.fc_out = nn.Linear(128, out_dim)
+        self.fc_out = nn.Linear(128, num_classes)
         
         self.dropout = nn.Dropout(dropout)
         self.relu = nn.ReLU()

@@ -14,6 +14,7 @@ def run_kfold_training(X_all, y_all, window_meta_df, cfg, run_dir, label_encoder
     folds = list(cv.split(X_all, y_all, groups=groups))
     
     fold_val_losses = []
+    fold_val_accs = []
     best_model_overall = None
     best_scaler_overall = None
     best_loss_overall = float('inf')
@@ -22,17 +23,20 @@ def run_kfold_training(X_all, y_all, window_meta_df, cfg, run_dir, label_encoder
         X_tr, y_tr = X_all[train_idx], y_all[train_idx]
         X_va, y_va = X_all[val_idx], y_all[val_idx]
         
-        val_loss, model, scaler = run_training_core(
+        val_loss, val_acc, model, scaler = run_training_core(
             X_tr, y_tr, X_va, y_va, cfg, label_encoder, run_dir, device, fold=fold_idx
         )
         fold_val_losses.append(val_loss)
+        fold_val_accs.append(val_acc)
         
         if val_loss < best_loss_overall:
             best_loss_overall = val_loss
             best_model_overall = model
             best_scaler_overall = scaler
             
-    print(f"[DONE] KFold finished. Avg Val Loss: {np.mean(fold_val_losses):.4f}", flush=True)
+    avg_loss = np.mean(fold_val_losses)
+    avg_acc = np.mean(fold_val_accs)
+    print(f"[DONE] KFold finished. Avg Val Loss: {avg_loss:.4f} | Avg Val Acc: {avg_acc:.4f}", flush=True)
     
     # Save best overall
     save_path = run_dir / "best_model.pt"
@@ -45,6 +49,7 @@ def run_kfold_training(X_all, y_all, window_meta_df, cfg, run_dir, label_encoder
     print(f"Saved best K-Fold model to {save_path.resolve()}", flush=True)
 
     if mlflow.active_run():
-        mlflow.log_metric("avg_val_loss", float(np.mean(fold_val_losses)))
+        mlflow.log_metric("avg_val_loss", float(avg_loss))
+        mlflow.log_metric("avg_val_acc", float(avg_acc))
         mlflow.log_artifact(str(save_path), artifact_path="model_bundle")
         mlflow.pytorch.log_model(best_model_overall, artifact_path="pytorch_model", registered_model_name=cfg.task.name)
