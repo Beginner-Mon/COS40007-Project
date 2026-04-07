@@ -206,7 +206,7 @@ if page == "Pipeline Architecture & Data Flow":
     if data_dir.exists():
         csv_files = list(data_dir.glob("*.csv"))
         if csv_files:
-            col1, col2 = st.columns(2)
+            col1, col2, col3 = st.columns(3)
             with col1:
                 selected_csv = st.selectbox("Select Target Dataset (CSV)", [f.name for f in csv_files])
             
@@ -219,36 +219,64 @@ if page == "Pipeline Architecture & Data Flow":
                 
                 with col2:
                     selected_v_id = st.selectbox("Select Video ID Trace", unique_vids)
+                
+                with col3:
+                    task_yaml_dir = APP_DIR / "configs/task"
+                    task_files = [f.stem for f in task_yaml_dir.glob("*.yaml")] if task_yaml_dir.exists() else ["activity_recognition", "boning_vs_slicing", "knife_sharpness"]
+                    selected_task = st.selectbox("Select ML Task Config", task_files)
 
                 if st.button("Run Preprocessing Simulation", type="primary"):
                     st.session_state.show_sim = True
                     st.session_state.sim_vid = selected_v_id
                     st.session_state.sim_csv = str(csv_path)
+                    st.session_state.sim_task = selected_task
 
-                if st.session_state.get("show_sim", False) and st.session_state.get("sim_vid") == selected_v_id and st.session_state.get("sim_csv") == str(csv_path):
+                if st.session_state.get("show_sim", False) and st.session_state.get("sim_vid") == selected_v_id and st.session_state.get("sim_csv") == str(csv_path) and st.session_state.get("sim_task") == selected_task:
                     
                     @st.cache_data(show_spinner=False)
-                    def load_and_preprocess_sample(csv_path_str, v_id):
+                    def load_and_preprocess_sample(csv_path_str, v_id, task_name):
                         import pandas as pd
+                        import yaml
                         from data.preprocessing import (
                             merge_velocity_and_acceleration,
                             clean_labels,
-                            engineer_features
+                            engineer_features,
+                            derive_sharpness_class
                         )
+                        
+                        task_path = APP_DIR / f"configs/task/{task_name}.yaml"
+                        excluded = []
+                        target_col = "Label"
+                        if task_path.exists():
+                            with open(task_path, 'r') as f:
+                                cfg = yaml.safe_load(f)
+                                excluded = cfg.get("excluded_labels", [])
+                                target_col = cfg.get("target_col", "Label")
+
                         chunks = []
                         for c in pd.read_csv(csv_path_str, chunksize=50000):
                             chunks.append(c[c['video_id'] == v_id])
                         raw = pd.concat(chunks, ignore_index=True)
                         if raw.empty:
-                            return None, None, None, None, None
+                            return None, None, None, None, None, 0, target_col, excluded
                         
                         merged, base_cols = merge_velocity_and_acceleration(raw)
                         cleaned = clean_labels(merged)
-                        eng, f_cols = engineer_features(cleaned.copy(), base_cols)
-                        return raw, merged, cleaned, eng, f_cols
                         
-                    with st.spinner(f"Processing '{selected_v_id}' (cached)..."):
-                        raw_df, merged_df, cleaned_df, eng_df, feat_cols = load_and_preprocess_sample(str(csv_path), selected_v_id)
+                        pre_clean_len = len(cleaned)
+                        if excluded:
+                            cleaned = cleaned[~cleaned["Label"].isin(excluded)].copy()
+                        dropped_by_task = pre_clean_len - len(cleaned)
+                        
+                        if target_col == "sharpness_class" and "sharpness_class" not in cleaned.columns:
+                            cleaned = derive_sharpness_class(cleaned)
+
+                        eng, f_cols = engineer_features(cleaned.copy(), base_cols)
+                        
+                        return raw, merged, cleaned, eng, f_cols, dropped_by_task, target_col, excluded
+                        
+                    with st.spinner(f"Processing '{selected_v_id}' under '{selected_task}' rules (cached)..."):
+                        raw_df, merged_df, cleaned_df, eng_df, feat_cols, dropped_by_task, task_target_col, excluded_labels = load_and_preprocess_sample(str(csv_path), selected_v_id, selected_task)
                     
                     if raw_df is None or raw_df.empty:
                         st.warning("No data found for this video ID.")
@@ -302,6 +330,20 @@ if page == "Pipeline Architecture & Data Flow":
                                 st.success("✅ No corrupted NaN label rows detected.")
                         else:
                             st.write("Target Column Data Type:", f"`{cleaned_df['Label'].dtype}`")
+                            
+                        st.markdown("---")
+                        st.markdown(f"#### Stage 3.5: Task-Specific Rules (`{selected_task}`)")
+                        st.markdown(f"Pulling runtime configuration directly from `backend/configs/task/{selected_task}.yaml`.")
+                        
+                        tcol1, tcol2 = st.columns(2)
+                        tcol1.metric("Target Prediction Column", f"`{task_target_col}`")
+                        
+                        if excluded_labels:
+                            tcol2.metric("Rows Excluded by Task", f"{dropped_by_task:,}", "Dropped", delta_color="inverse")
+                            st.info(f"**Task Constraint:** The labels `{excluded_labels}` are strictly prohibited by this task's YAML and were stripped out.")
+                        else:
+                            tcol2.metric("Rows Excluded by Task", "0")
+                            st.success("**Task Constraint:** This task allows all labels. No data was dropped.")
 
                         st.markdown("---")
                         st.markdown("#### Stage 4: Feature Engineering (`engineer_features`)")
@@ -355,15 +397,8 @@ if page == "Pipeline Architecture & Data Flow":
 
                         st.markdown("---")
                         st.markdown("#### Stage 5: Target Windowing (`create_windows`)")
-                        
-                        target_col_selection = st.selectbox("Select Target Sequence Boundary", ["Label", "activity_type", "sharpness_class", "knife_sharpness_score"])
-                        
-                        # Derive sharpness_class if needed
-                        if target_col_selection == "sharpness_class" and "sharpness_class" not in eng_df.columns:
-                            from data.preprocessing import derive_sharpness_class
-                            eng_df = derive_sharpness_class(eng_df)
                             
-                        st.markdown(f"Constructing sliding time-series windows (hardcoded `window_size=60`, `stride=30`, `frame_skip_step=2`). Sequence terminates inherently if **`{target_col_selection}`** changes or Frame jumps > 1.")
+                        st.markdown(f"Constructing sliding time-series windows (hardcoded `window_size=60`, `stride=30`, `frame_skip_step=2`). Sequence terminates inherently if **`{task_target_col}`** changes or Frame jumps > 1.")
                         
                         try:
                             # Use default parameters as requested
@@ -372,7 +407,7 @@ if page == "Pipeline Architecture & Data Flow":
                                 feat_cols, 
                                 window_size=60, 
                                 stride=30, 
-                                target_col=target_col_selection, 
+                                target_col=task_target_col, 
                                 frame_skip_step=2
                             )
                             
@@ -380,10 +415,10 @@ if page == "Pipeline Architecture & Data Flow":
                                 sample_shape = X_windows[0].shape
                                 st.success(f"Successfully generated **{len(X_windows)} sequences**. Output Tensor Shape: `[{len(X_windows)}, {sample_shape[0]}, {sample_shape[1]}]`")
                                 
-                                st.markdown(f"**Generated `{target_col_selection}` Distribution (Post-Windowing)**")
+                                st.markdown(f"**Generated `{task_target_col}` Distribution (Post-Windowing)**")
                                 dist_series = pd.Series(y_windows).value_counts().sort_index()
                                 # Convert series index to string names for better readability on chart
-                                dist_series.index = dist_series.index.map(lambda x: f"{target_col_selection}: {x}")
+                                dist_series.index = dist_series.index.map(lambda x: f"{task_target_col}: {x}")
                                 st.bar_chart(dist_series)
                             else:
                                 st.warning("Not enough continuous frames to build a 60-frame window from this subset.")
