@@ -258,19 +258,50 @@ if page == "Pipeline Architecture & Data Flow":
                         
                         st.markdown("---")
                         st.markdown("#### Stage 1: Raw DataFrame Loading")
-                        st.markdown(f"Loaded **{len(raw_df)} rows** strictly belonging to `{selected_v_id}`. Notice the vertically staggered Velocity and Acceleration rows.")
-                        st.dataframe(raw_df.head(6), use_container_width=True)
+                        st.markdown(f"Successfully filtered and pinned **{len(raw_df):,}** contiguous rows strictly belonging to `{selected_v_id}`.")
+                        
+                        s1c1, s1c2, s1c3 = st.columns(3)
+                        s1c1.metric("Total Raw Rows", f"{len(raw_df):,}")
+                        sensor_cols = [c for c in raw_df.columns if c not in ["video_id", "Frame", "sensor_type", "Label", "activity_type", "sharpness_class"]]
+                        s1c2.metric("Unique Sensors Tracked", len(sensor_cols))
+                        
+                        if "sensor_type" in raw_df.columns:
+                            s1c3.metric("Sensor Streams Tagged", raw_df["sensor_type"].nunique())
+                            st.caption("Distribution of staggered Sensor streams before horizontal alignment:")
+                            st.bar_chart(raw_df["sensor_type"].value_counts())
+                        else:
+                            s1c3.metric("Sensor Streams Tagged", "Unknown")
                         
                         st.markdown("---")
                         st.markdown("#### Stage 2: Sensor Alignment (`merge_velocity_and_acceleration`)")
-                        st.markdown(f"Horizontally zipped by strictly matching Frame identifiers. Row count shrunk to **{len(merged_df)} pairs**. Columns suffixed with `_vel` and `_acc`.")
-                        st.dataframe(merged_df.head(4), use_container_width=True)
+                        st.markdown("Physical rows representing the exact same moment in time (Frame) are horizontally zipped together to eliminate vertical staggering.")
+                        s2c1, s2c2 = st.columns(2)
+                        s2c1.metric("Row Count Transformation", f"{len(raw_df):,} ➔ {len(merged_df):,}", f"Reduced by {len(raw_df)-len(merged_df):,} rows", delta_color="normal")
+                        s2c2.metric("Column Count Expansion", f"{len(raw_df.columns)} ➔ {len(merged_df.columns)}", f"Expanded by {len(merged_df.columns)-len(raw_df.columns)} cols", delta_color="normal")
+                        
+                        st.info("💡 **Suffix Injection Example:** `Right Hand x` splits perfectly into `Right Hand x_vel` and `Right Hand x_acc`.")
 
                         st.markdown("---")
                         st.markdown("#### Stage 3: Label Cleaning (`clean_labels`)")
-                        st.markdown("Mapped raw string labels into pure Integers (`int64`). Hidden bug-overrides (like Boning Label 5 -> 8) triggered here.")
-                        st.write(f"Target Column Data Type: `{cleaned_df['Label'].dtype}`")
-                        st.dataframe(cleaned_df[["video_id", "Frame", "Label", "activity_type"]].head(4), use_container_width=True)
+                        st.markdown("Dirty string representations are mapped strictly into Neural Network compatible integers (`int64`).")
+                        
+                        if "Label" in merged_df.columns and "Label" in cleaned_df.columns:
+                            original_labels = merged_df["Label"].dropna().unique().tolist()
+                            mapping_pairs = []
+                            for dirty_lbl in original_labels:
+                                sample_frame = merged_df[merged_df["Label"] == dirty_lbl]["Frame"].iloc[0]
+                                clean_val_series = cleaned_df[cleaned_df["Frame"] == sample_frame]["Label"]
+                                if not clean_val_series.empty:
+                                    mapping_pairs.append({"Original Discovered String": str(dirty_lbl), "Cleaned Integer Transformation": clean_val_series.iloc[0]})
+                            st.table(pd.DataFrame(mapping_pairs))
+                            
+                            corrupt_drops = len(merged_df) - len(cleaned_df)
+                            if corrupt_drops > 0:
+                                st.warning(f"⚠️ Dropped {corrupt_drops} corrupted rows where Label string could not be parsed.")
+                            else:
+                                st.success("✅ No corrupted NaN label rows detected.")
+                        else:
+                            st.write("Target Column Data Type:", f"`{cleaned_df['Label'].dtype}`")
 
                         st.markdown("---")
                         st.markdown("#### Stage 4: Feature Engineering (`engineer_features`)")
@@ -288,10 +319,39 @@ if page == "Pipeline Architecture & Data Flow":
                             st.caption("Limb Energy Ratio")
                             st.latex(r"Ratio = \frac{E_{upper}}{E_{upper} + E_{lower} + 1e^{-8}}")
                             
-                        # Filter out raw sensor columns to display purely engineered subsets
-                        engineered_cols_only = [col for col in eng_df.columns if not col.endswith('_vel') and not col.endswith('_acc')]
-                        display_cols = ["video_id", "Frame", "Label"] + [c for c in engineered_cols_only if c not in ["video_id", "Frame", "Label", "activity_type"]]
-                        st.dataframe(eng_df[display_cols].head(4), use_container_width=True)
+                        st.markdown("**Interactive Feature Plotter**")
+                        # Isolate genuine engineered columns while masking out administrative/raw data
+                        raw_eng = [c for c in eng_df.columns if c not in ["video_id", "Frame", "Label", "activity_type", "sharpness_class", "person_id", "knife_sharpness_score", "_merge"]]
+                        pure_eng = [c for c in raw_eng if not c.endswith('_vel') and not c.endswith('_acc')]
+                        
+                        plot_options = {}
+                        for col in pure_eng:
+                            # Group kinematic magnitude and 2D planar pairs
+                            if col.endswith("_vel_mag") or col.endswith("_acc_mag"):
+                                base = col.replace("_vel_mag", " Magnitude").replace("_acc_mag", " Magnitude")
+                                if base not in plot_options: plot_options[base] = []
+                                plot_options[base].append(col)
+                            elif col.endswith("_vel_xy") or col.endswith("_acc_xy"):
+                                base = col.replace("_vel_xy", " XY Plane").replace("_acc_xy", " XY Plane")
+                                if base not in plot_options: plot_options[base] = []
+                                plot_options[base].append(col)
+                            elif col.endswith("_vel_xz") or col.endswith("_acc_xz"):
+                                base = col.replace("_vel_xz", " XZ Plane").replace("_acc_xz", " XZ Plane")
+                                if base not in plot_options: plot_options[base] = []
+                                plot_options[base].append(col)
+                            elif col.endswith("_vel_yz") or col.endswith("_acc_yz"):
+                                base = col.replace("_vel_yz", " YZ Plane").replace("_acc_yz", " YZ Plane")
+                                if base not in plot_options: plot_options[base] = []
+                                plot_options[base].append(col)
+                            else:
+                                plot_options[col] = [col]
+                                
+                        if plot_options:
+                            selected_feature = st.selectbox("Select engineered sequence feature to visualize:", list(plot_options.keys()))
+                            cols_to_plot = plot_options[selected_feature]
+                            st.line_chart(eng_df.set_index("Frame")[cols_to_plot])
+                        else:
+                            st.warning("No purely engineered columns detected.")
 
                         st.markdown("---")
                         st.markdown("#### Stage 5: Target Windowing (`create_windows`)")
