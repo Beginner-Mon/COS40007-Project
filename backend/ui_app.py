@@ -188,30 +188,18 @@ if page == "Pipeline Architecture & Data Flow":
     st.markdown("This page provides a visual and interactive trace of the data processing algorithms turning raw CSVs into PyTorch Tensors.")
     
     st.subheader("1. Conceptual Data Flow")
-    st.markdown("""
-```mermaid
-flowchart LR
-    classDef io fill:#f9f,stroke:#333,stroke-width:2px;
-    classDef proc fill:#bbf,stroke:#333,stroke-width:2px;
-    classDef model fill:#fbb,stroke:#333,stroke-width:2px;
-
-    style DataFolder fill:#f9f,stroke:#333,stroke-width:4px
-    style DataLoader fill:#fbb,stroke:#333,stroke-width:4px
-
-    DataFolder(["output_data Folder"]):::io --> CSV["Load CSV Files"]:::proc
-    CSV --> Merge["Merge Sensors"]:::proc
-    Merge --> LabelClean["Label Cleaning"]:::proc
-    LabelClean --> FilterLabel["Filter Excluded Labels"]:::proc
-    FilterLabel --> FeatEng["Feature Engineering"]:::proc
-    FeatEng --> Cleaning["Sanitize Features"]:::proc
-    Cleaning --> Windowing["Create Windows"]:::proc
-    Windowing --> Padding["Pad Windows"]:::proc
-    Padding --> Split["Train/Validation Split"]:::proc
-    Split --> Scale["Scale Normalization"]:::proc
-    Scale --> Dataset["PyTorch MotionDataset"]:::proc
-    Dataset --> DataLoader(["PyTorch DataLoader"]):::model
-```
-""")
+    st.graphviz_chart('''
+    digraph DataFlow {
+        rankdir=LR;
+        node [shape=box, style="filled,rounded", fontname="sans-serif", fillcolor="#e0e5ff", color="#a3b1ff", margin=0.2];
+        edge [color="#8c9eff", penwidth=2];
+        
+        Source [label="output_data Folder", shape=cylinder, fillcolor="#ffccbc", color="#ffab91"];
+        Target [label="PyTorch DataLoader", shape=cylinder, fillcolor="#c8e6c9", color="#a5d6a7"];
+        
+        Source -> "Load CSV" -> "Merge Sensors" -> "Label Cleaning" -> "Filter Labels" -> "Engineer Features" -> "Sanitize Features" -> "Create Windows" -> "Pad Windows" -> "Train / Val Split" -> "Standard Scaler" -> Target;
+    }
+    ''')
 
     st.subheader("2. Live Preprocessing Trace")
     data_dir = APP_DIR / "output_data"
