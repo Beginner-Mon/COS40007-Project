@@ -60,9 +60,6 @@ def run_holdout_training(X_all, y_all, window_meta_df, cfg, run_dir, label_encod
         X_tr, y_tr, X_va, y_va, cfg, label_encoder, run_dir, device, fold=1
     )
     
-    if mlflow.active_run():
-        mlflow.log_metric("val_loss", float(val_loss))
-        mlflow.log_param("holdout_mode", holdout_mode)
     print(f"[DONE] Holdout finished. Best Val Loss: {val_loss:.4f}", flush=True)
 
     save_path = run_dir / "best_model.pt"
@@ -73,3 +70,9 @@ def run_holdout_training(X_all, y_all, window_meta_df, cfg, run_dir, label_encod
         "config": OmegaConf.to_container(cfg)
     }, save_path)
     print(f"Saved best Holdout model to {save_path.resolve()}", flush=True)
+
+    if mlflow.active_run():
+        mlflow.log_metric("val_loss", float(val_loss))
+        mlflow.log_param("holdout_mode", holdout_mode)
+        mlflow.log_artifact(str(save_path), artifact_path="model_bundle")
+        mlflow.pytorch.log_model(model, artifact_path="pytorch_model", registered_model_name=cfg.task.name)

@@ -27,7 +27,7 @@ MLFLOW_RUN_PATTERN = re.compile(
     r"\[mlflow\]\s+tracking_uri=([^\s]+)\s+experiment_id=([^\s]+)\s+run_id=([a-f0-9]+)"
 )
 
-DEFAULT_KFOLD_TASKS = {"boning_vs_slicing", "knife_sharpness"}
+DEFAULT_KFOLD_TASKS = {"boning_vs_slicing", "knife_sharpness", "activity_recognition"}
 MLFLOW_BACKEND_URI = "sqlite:///mlflow_tracking.db"
 
 
@@ -181,9 +181,168 @@ def _run_streaming_command(
     return return_code, "\n".join(logs)
 
 st.sidebar.header("Navigation")
-page = st.sidebar.radio("Go to", ["Data Preprocessing & EDA", "Model Training"])
+page = st.sidebar.radio("Go to", ["Pipeline Architecture & Data Flow", "Data Preprocessing & EDA", "Model Training"])
 
-if page == "Data Preprocessing & EDA":
+if page == "Pipeline Architecture & Data Flow":
+    st.header("⚙️ Pipeline Architecture & Data Flow")
+    st.markdown("This page provides a visual and interactive trace of the data processing algorithms turning raw CSVs into PyTorch Tensors.")
+    
+    st.subheader("1. Conceptual Data Flow")
+    st.markdown("""
+```mermaid
+flowchart LR
+    classDef io fill:#f9f,stroke:#333,stroke-width:2px;
+    classDef proc fill:#bbf,stroke:#333,stroke-width:2px;
+    classDef model fill:#fbb,stroke:#333,stroke-width:2px;
+
+    style DataFolder fill:#f9f,stroke:#333,stroke-width:4px
+    style DataLoader fill:#fbb,stroke:#333,stroke-width:4px
+
+    DataFolder(["output_data Folder"]):::io --> CSV["Load CSV Files"]:::proc
+    CSV --> Merge["Merge Sensors"]:::proc
+    Merge --> LabelClean["Label Cleaning"]:::proc
+    LabelClean --> FilterLabel["Filter Excluded Labels"]:::proc
+    FilterLabel --> FeatEng["Feature Engineering"]:::proc
+    FeatEng --> Cleaning["Sanitize Features"]:::proc
+    Cleaning --> Windowing["Create Windows"]:::proc
+    Windowing --> Padding["Pad Windows"]:::proc
+    Padding --> Split["Train/Validation Split"]:::proc
+    Split --> Scale["Scale Normalization"]:::proc
+    Scale --> Dataset["PyTorch MotionDataset"]:::proc
+    Dataset --> DataLoader(["PyTorch DataLoader"]):::model
+```
+""")
+
+    st.subheader("2. Live Preprocessing Trace")
+    data_dir = APP_DIR / "output_data"
+    if data_dir.exists():
+        csv_files = list(data_dir.glob("*.csv"))
+        if csv_files:
+            col1, col2 = st.columns(2)
+            with col1:
+                selected_csv = st.selectbox("Select Target Dataset (CSV)", [f.name for f in csv_files])
+            
+            if selected_csv:
+                csv_path = data_dir / selected_csv
+                with st.spinner("Discovering Video IDs..."):
+                    # Fast loading just to get video_ids
+                    vid_df = pd.read_csv(csv_path, usecols=['video_id'])
+                    unique_vids = vid_df['video_id'].dropna().unique().tolist()
+                
+                with col2:
+                    selected_v_id = st.selectbox("Select Video ID Trace", unique_vids)
+
+                if st.button("Run Preprocessing Simulation", type="primary"):
+                    st.session_state.show_sim = True
+                    st.session_state.sim_vid = selected_v_id
+                    st.session_state.sim_csv = str(csv_path)
+
+                if st.session_state.get("show_sim", False) and st.session_state.get("sim_vid") == selected_v_id and st.session_state.get("sim_csv") == str(csv_path):
+                    
+                    @st.cache_data(show_spinner=False)
+                    def load_and_preprocess_sample(csv_path_str, v_id):
+                        import pandas as pd
+                        from data.preprocessing import (
+                            merge_velocity_and_acceleration,
+                            clean_labels,
+                            engineer_features
+                        )
+                        chunks = []
+                        for c in pd.read_csv(csv_path_str, chunksize=50000):
+                            chunks.append(c[c['video_id'] == v_id])
+                        raw = pd.concat(chunks, ignore_index=True)
+                        if raw.empty:
+                            return None, None, None, None, None
+                        
+                        merged, base_cols = merge_velocity_and_acceleration(raw)
+                        cleaned = clean_labels(merged)
+                        eng, f_cols = engineer_features(cleaned.copy(), base_cols)
+                        return raw, merged, cleaned, eng, f_cols
+                        
+                    with st.spinner(f"Processing '{selected_v_id}' (cached)..."):
+                        raw_df, merged_df, cleaned_df, eng_df, feat_cols = load_and_preprocess_sample(str(csv_path), selected_v_id)
+                    
+                    if raw_df is None or raw_df.empty:
+                        st.warning("No data found for this video ID.")
+                    else:
+                        from data.preprocessing import create_windows
+                        import numpy as np
+                        
+                        st.markdown("---")
+                        st.markdown("#### Stage 1: Raw DataFrame Loading")
+                        st.markdown(f"Loaded **{len(raw_df)} rows** strictly belonging to `{selected_v_id}`. Notice the vertically staggered Velocity and Acceleration rows.")
+                        st.dataframe(raw_df.head(6), use_container_width=True)
+                        
+                        st.markdown("---")
+                        st.markdown("#### Stage 2: Sensor Alignment (`merge_velocity_and_acceleration`)")
+                        st.markdown(f"Horizontally zipped by strictly matching Frame identifiers. Row count shrunk to **{len(merged_df)} pairs**. Columns suffixed with `_vel` and `_acc`.")
+                        st.dataframe(merged_df.head(4), use_container_width=True)
+
+                        st.markdown("---")
+                        st.markdown("#### Stage 3: Label Cleaning (`clean_labels`)")
+                        st.markdown("Mapped raw string labels into pure Integers (`int64`). Hidden bug-overrides (like Boning Label 5 -> 8) triggered here.")
+                        st.write(f"Target Column Data Type: `{cleaned_df['Label'].dtype}`")
+                        st.dataframe(cleaned_df[["video_id", "Frame", "Label", "activity_type"]].head(4), use_container_width=True)
+
+                        st.markdown("---")
+                        st.markdown("#### Stage 4: Feature Engineering (`engineer_features`)")
+                        st.markdown(f"Mathematical feature extraction. Column count exploded from `{len(cleaned_df.columns)}` to `{len(eng_df.columns)}`.")
+                        
+                        st.markdown("**Core Algorithms:**")
+                        c1, c2, c3 = st.columns(3)
+                        with c1:
+                            st.caption("3D Vector Magnitude")
+                            st.latex(r"M = \sqrt{v_x^2 + v_y^2 + v_z^2}")
+                        with c2:
+                            st.caption("Total Kinetic Energy")
+                            st.latex(r"E_{total} = \sum_{joint} (v^2 + a^2)")
+                        with c3:
+                            st.caption("Limb Energy Ratio")
+                            st.latex(r"Ratio = \frac{E_{upper}}{E_{upper} + E_{lower} + 1e^{-8}}")
+                            
+                        # Filter out raw sensor columns to display purely engineered subsets
+                        engineered_cols_only = [col for col in eng_df.columns if not col.endswith('_vel') and not col.endswith('_acc')]
+                        display_cols = ["video_id", "Frame", "Label"] + [c for c in engineered_cols_only if c not in ["video_id", "Frame", "Label", "activity_type"]]
+                        st.dataframe(eng_df[display_cols].head(4), use_container_width=True)
+
+                        st.markdown("---")
+                        st.markdown("#### Stage 5: Target Windowing (`create_windows`)")
+                        
+                        target_col_selection = st.selectbox("Select Target Sequence Boundary", ["Label", "activity_type", "sharpness_class", "knife_sharpness_score"])
+                        
+                        # Derive sharpness_class if needed
+                        if target_col_selection == "sharpness_class" and "sharpness_class" not in eng_df.columns:
+                            from data.preprocessing import derive_sharpness_class
+                            eng_df = derive_sharpness_class(eng_df)
+                            
+                        st.markdown(f"Constructing sliding time-series windows (hardcoded `window_size=60`, `stride=30`, `frame_skip_step=2`). Sequence terminates inherently if **`{target_col_selection}`** changes or Frame jumps > 1.")
+                        
+                        try:
+                            # Use default parameters as requested
+                            X_windows, y_windows, window_meta_df = create_windows(
+                                eng_df, 
+                                feat_cols, 
+                                window_size=60, 
+                                stride=30, 
+                                target_col=target_col_selection, 
+                                frame_skip_step=2
+                            )
+                            
+                            if len(X_windows) > 0:
+                                sample_shape = X_windows[0].shape
+                                st.success(f"Successfully generated **{len(X_windows)} sequences**. Output Tensor Shape: `[{len(X_windows)}, {sample_shape[0]}, {sample_shape[1]}]`")
+                                
+                                st.markdown(f"**Generated `{target_col_selection}` Distribution (Post-Windowing)**")
+                                dist_series = pd.Series(y_windows).value_counts().sort_index()
+                                # Convert series index to string names for better readability on chart
+                                dist_series.index = dist_series.index.map(lambda x: f"{target_col_selection}: {x}")
+                                st.bar_chart(dist_series)
+                            else:
+                                st.warning("Not enough continuous frames to build a 60-frame window from this subset.")
+                        except Exception as e:
+                            st.error(f"Windowing failed: {e}")
+
+elif page == "Data Preprocessing & EDA":
     st.header("Data Preprocessing & EDA")
     data_dir = APP_DIR / "output_data"
     if data_dir.exists():
@@ -371,16 +530,23 @@ elif page == "Model Training":
 
     is_mlflow_up = _is_mlflow_up(mlflow_url)
 
+    status_col, refresh_col = st.columns([0.8, 0.2])
+    with refresh_col:
+        st.button("🔄 Refresh Status")
+
+    with status_col:
+        if is_mlflow_up:
+            st.success("MLflow is running.")
+        else:
+            st.warning("MLflow is not reachable on 127.0.0.1:5000 yet. Wait a few seconds and refresh.")
+
     if is_mlflow_up:
-        st.success("MLflow is running.")
         mlflow_col1, mlflow_col2 = st.columns(2)
         with mlflow_col1:
             st.link_button("Open MLflow Experiments", f"{mlflow_url}/#/experiments")
         with mlflow_col2:
             st.link_button("Open MLflow Home", mlflow_url)
         st.caption("If MLflow opens in GenAI mode, switch to Model training to see training runs.")
-    else:
-        st.warning("MLflow is not reachable on 127.0.0.1:5000 yet. Wait a few seconds and refresh.")
 
     st.sidebar.markdown("---")
     # Training Trigger
@@ -406,7 +572,7 @@ elif page == "Model Training":
             "-u",
             "train.py",
             f"task={selected_task}",
-            f"model.type={selected_model_arch}",
+            f"+model.type={selected_model_arch}",
             f"train.epochs={epochs}",
             f"data.batch_size={batch_size}",
             f"train.lr={lr_str}",

@@ -16,63 +16,54 @@ def derive_sharpness_class(df):
     return df
 
 
-def apply_activity_label_overrides(
-    df,
-    target_col="Label",
-    by_activity=None,
-    activity_col="activity_type",
-):
-    """Apply optional activity-specific label remapping rules.
+LABEL_MAPPING = {
+    '0- Idle': 0,
+    '0 - Idle': 0,
+    '1- Walking': 1,
+    '1 - Walking': 1,
+    '2- Steeling': 2,
+    '2 - Steeling': 2,
+    '3- Reaching': 3,
+    '3 - Reaching': 3,
+    '4- Cutting': 4,
+    '4 - Cutting': 4,
+    '4 - Cutting (Big Pieces)': 4,
+    '4 - Cutting (Big Piece)': 4,
+    '4- Cutting (big piece)': 4,
+    '4 - Cutting (offloading bone from Carcass)': 4,
+    '5- Dropping': 8,
+    '5 - Dropping': 8,
+    '5 - Slicing': 5,
+    '6 - Pulling': 6,
+    '7 - Placing/ Manipulating': 7,
+    '8 - Dropping': 8,
+}
 
-    Args:
-        df: Input dataframe.
-        target_col: Column to remap.
-        by_activity: Dict in the form:
-            {
-                "boning": {5: 8},
-                "slicing": {8: 5},
-            }
-        activity_col: Activity column used to scope remaps.
-
-    Returns:
-        Tuple of (updated_df, applied_counts).
-        applied_counts is a dict keyed by "activity:src->dst" with changed row counts.
-    """
-    if not by_activity:
-        return df, {}
-
-    if target_col not in df.columns or activity_col not in df.columns:
-        return df, {}
+def clean_labels(df, target_col="Label", activity_col="activity_type"):
+    """Map string labels to consistent integers and apply Boning 5->8 overrides."""
+    if target_col not in df.columns:
+        return df
 
     out_df = df.copy()
-    applied_counts = {}
-    activity_series = out_df[activity_col].astype(str).str.strip().str.lower()
 
-    for activity_name, label_map in by_activity.items():
-        if not isinstance(label_map, dict):
-            continue
+    # 1. Base mapping to integers
+    out_df[target_col] = out_df[target_col].replace(LABEL_MAPPING)
+    out_df[target_col] = pd.to_numeric(out_df[target_col], errors='coerce')
+    out_df = out_df.dropna(subset=[target_col]).copy()
+    out_df[target_col] = out_df[target_col].astype('int64')
 
-        activity_key = str(activity_name).strip().lower()
-        activity_mask = activity_series.eq(activity_key)
-        if not activity_mask.any():
-            continue
+    # 2. Apply boning override: Label 5 -> 8
+    if activity_col in out_df.columns:
+        activity_series = out_df[activity_col].astype(str).str.strip().str.lower()
+        boning_mask = activity_series.eq('boning')
+        override_mask = boning_mask & out_df[target_col].eq(5)
+        changed = int(override_mask.sum())
+        
+        if changed > 0:
+            out_df.loc[override_mask, target_col] = 8
+            print(f"[phase=data] Auto-corrected {changed} 'boning' labels from 5 to 8.", flush=True)
 
-        for src_label, dst_label in label_map.items():
-            try:
-                src_value = int(src_label)
-                dst_value = int(dst_label)
-            except (TypeError, ValueError):
-                continue
-
-            remap_mask = activity_mask & out_df[target_col].eq(src_value)
-            changed = int(remap_mask.sum())
-            if changed == 0:
-                continue
-
-            out_df.loc[remap_mask, target_col] = dst_value
-            applied_counts[f"{activity_key}:{src_value}->{dst_value}"] = changed
-
-    return out_df, applied_counts
+    return out_df
 
 
 FEATURE_COLS = [
@@ -316,7 +307,13 @@ def create_windows(
     for i in range(1, len(df)):
         video_i = df.loc[i, "video_id"]
         target_i = df.loc[i, target_col]
-        if (video_i != current_video) or (target_i != current_target):
+        
+        # Enforce temporal continuity
+        frame_i = df.loc[i, "Frame"]
+        frame_prev = df.loc[i - 1, "Frame"]
+        is_continuous = (frame_i - frame_prev) == 1
+        
+        if (video_i != current_video) or (target_i != current_target) or not is_continuous:
             end_idx = i - 1
             runs.append({
                 "video_id": current_video, "target": current_target,

@@ -32,8 +32,6 @@ def run_kfold_training(X_all, y_all, window_meta_df, cfg, run_dir, label_encoder
             best_model_overall = model
             best_scaler_overall = scaler
             
-    if mlflow.active_run():
-        mlflow.log_metric("avg_val_loss", float(np.mean(fold_val_losses)))
     print(f"[DONE] KFold finished. Avg Val Loss: {np.mean(fold_val_losses):.4f}", flush=True)
     
     # Save best overall
@@ -45,3 +43,8 @@ def run_kfold_training(X_all, y_all, window_meta_df, cfg, run_dir, label_encoder
         "config": OmegaConf.to_container(cfg)
     }, save_path)
     print(f"Saved best K-Fold model to {save_path.resolve()}", flush=True)
+
+    if mlflow.active_run():
+        mlflow.log_metric("avg_val_loss", float(np.mean(fold_val_losses)))
+        mlflow.log_artifact(str(save_path), artifact_path="model_bundle")
+        mlflow.pytorch.log_model(best_model_overall, artifact_path="pytorch_model", registered_model_name=cfg.task.name)

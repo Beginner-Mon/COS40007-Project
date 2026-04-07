@@ -22,7 +22,7 @@ from data.preprocessing import (
     engineer_features,
     pad_windows_to_60,
     derive_sharpness_class,
-    apply_activity_label_overrides,
+    clean_labels,
 )
 
 # Import our newly decoupled modules
@@ -78,34 +78,11 @@ def main(cfg: DictConfig):
         merged_df, base_feature_cols = merge_velocity_and_acceleration(raw_df)
 
         # 2. Map and Filter Labels
-        label_map = dict(cfg.task.label_mapping)
-        merged_df["Label"] = merged_df["Label"].replace(label_map)
-        merged_df["Label"] = pd.to_numeric(merged_df["Label"], errors='coerce')
-        merged_df.dropna(subset=["Label"], inplace=True)
-        merged_df["Label"] = merged_df["Label"].astype('int64')
+        merged_df = clean_labels(merged_df)
 
-        excluded = list(cfg.task.excluded_labels)
+        excluded = list(cfg.task.get("excluded_labels", []))
         if excluded:
             merged_df = merged_df[~merged_df["Label"].isin(excluded)].copy()
-
-        # Optional activity-specific remaps (task-scoped).
-        activity_overrides_cfg = cfg.task.get("activity_label_overrides")
-        if activity_overrides_cfg and bool(activity_overrides_cfg.get("enabled", False)):
-            override_target_col = activity_overrides_cfg.get("target_col", "Label")
-            override_activity_col = activity_overrides_cfg.get("activity_col", "activity_type")
-            by_activity_cfg = activity_overrides_cfg.get("by_activity", {})
-            by_activity = OmegaConf.to_container(by_activity_cfg, resolve=True)
-
-            merged_df, override_counts = apply_activity_label_overrides(
-                merged_df,
-                target_col=override_target_col,
-                by_activity=by_activity,
-                activity_col=override_activity_col,
-            )
-            if override_counts:
-                print("[phase=data] activity label overrides applied:", flush=True)
-                for rule_name, changed in sorted(override_counts.items()):
-                    print(f"  {rule_name}: {changed}", flush=True)
 
         # Derive sharpness_class if needed by this task
         TARGET_COL = cfg.task.target_col
