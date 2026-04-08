@@ -30,7 +30,7 @@ def run_training_core(X_train, y_train, X_val, y_val, cfg, label_encoder, run_di
     val_dataset = MotionDataset(X_val_scaled, y_val)
 
     pin_memory = str(device).startswith("cuda")
-    train_loader = DataLoader(train_dataset, batch_size=cfg.data.batch_size, shuffle=True, pin_memory=pin_memory)
+    train_loader = DataLoader(train_dataset, batch_size=cfg.data.batch_size, shuffle=True, drop_last=True, pin_memory=pin_memory)
     val_loader = DataLoader(val_dataset, batch_size=cfg.data.batch_size, shuffle=False, pin_memory=pin_memory)
 
     num_classes = len(label_encoder.classes_)
