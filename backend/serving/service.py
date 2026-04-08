@@ -223,3 +223,33 @@ class MotionClassifier:
             "device": str(self.device),
             "tasks": info,
         }
+
+    @bentoml.api()
+    def predict_video(
+        self,
+        video_path: str,
+        task: str = "activity_recognition",
+        window_size: int = 60,
+        stride: int = 30,
+        frame_skip_step: int = 2,
+    ) -> dict[str, Any]:
+        """
+        Accept a video file path and return per-window activity predictions.
+
+        The full pipeline runs:
+            Video → MediaPipe 2D → VideoPose3D 3D → Feature Engineering → BiLSTM.
+        """
+        from pipeline.video_inference import predict_from_video
+
+        try:
+            result = predict_from_video(
+                video_path=video_path,
+                checkpoint_path=None,      # auto-discover
+                task=task,
+                window_size=window_size,
+                stride=stride,
+                frame_skip_step=frame_skip_step,
+            )
+            return result
+        except Exception as e:
+            return {"error": str(e), "predictions": [], "summary": {}}

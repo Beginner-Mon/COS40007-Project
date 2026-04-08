@@ -8,6 +8,8 @@ pg1 = st.Page("ui/pipeline_architecture.py", title="Pipeline Architecture & Data
 pg2 = st.Page("ui/data_preprocessing.py", title="Data Preprocessing & EDA", icon="📊")
 pg3 = st.Page("ui/model_training.py", title="Model Training", icon="🔥")
 pg4 = st.Page("ui/model_inference.py", title="Model Inference", icon="🎯")
+pg5 = st.Page("ui/video_pipeline.py", title="Video Inference Pipeline", icon="🎬")
 
-pg = st.navigation([pg1, pg2, pg3, pg4])
+pg = st.navigation([pg1, pg2, pg3, pg4, pg5])
 pg.run()
+

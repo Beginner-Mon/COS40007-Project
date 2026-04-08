@@ -1,0 +1,61 @@
+{
+  "seed": 42,
+  "device": "auto",
+  "sensor_types": [
+    "Segment Position"
+  ],
+  "video_suffix": null,
+  "prediction_horizon": 1,
+  "window_size": 60,
+  "window_stride": 30,
+  "frame_skip_step": 2,
+  "batch_size": 32,
+  "num_workers": 0,
+  "epochs": 40,
+  "hidden_size": 128,
+  "num_layers": 1,
+  "dropout": 0.35,
+  "learning_rate": 0.001,
+  "weight_decay": 1e-05,
+  "early_stopping_patience": 8,
+  "scheduler_patience": 3,
+  "scheduler_factor": 0.5,
+  "scale_targets": true,
+  "test_video_ids": [
+    "MVN-J-Boning-90-004",
+    "MVN-S-Slicing-63-001",
+    "MVN-S-Boning-89-004"
+  ],
+  "label_specific_rules": {
+    "4": {
+      "window_size": 60,
+      "window_stride": 30,
+      "frame_skip_step": 3
+    },
+    "0": {
+      "window_size": 60,
+      "window_stride": 30,
+      "frame_skip_step": 2
+    },
+    "6": {
+      "window_size": 60,
+      "window_stride": 15,
+      "frame_skip_step": 1
+    },
+    "7": {
+      "window_size": 60,
+      "window_stride": 20,
+      "frame_skip_step": 1
+    },
+    "5": {
+      "window_size": 60,
+      "window_stride": 20,
+      "frame_skip_step": 1
+    },
+    "8": {
+      "window_size": 60,
+      "window_stride": 20,
+      "frame_skip_step": 2
+    }
+  }
+}

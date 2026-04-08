@@ -1,0 +1,22 @@
+# Video Inference Pipeline Configuration
+# Usage: referenced by pipeline/video_inference.py
+
+video:
+  mediapipe_model_complexity: 2     # 0=lite, 1=full, 2=heavy
+  min_detection_confidence: 0.5
+  min_tracking_confidence: 0.5
+
+pose_3d:
+  # Auto-downloads if not present. Set explicit path to override.
+  checkpoint: null  # e.g. "pipeline/checkpoints/pretrained_h36m_detectron_coco.bin"
+
+inference:
+  # Path to best_model.pt — null = auto-discover from outputs/
+  checkpoint_path: null
+  task: "activity_recognition"
+  sensor_types:
+    - "Segment Position"
+  window_size: 60
+  stride: 30
+  frame_skip_step: 2
+  pad_target_len: 60
