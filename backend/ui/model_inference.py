@@ -45,12 +45,15 @@ def _get_model_info() -> dict | None:
     return None
 
 
-def _predict(input_array: np.ndarray) -> dict | None:
+def _predict(task_name: str, input_array: np.ndarray) -> dict | None:
     """Send a single window to the /predict endpoint."""
     try:
         resp = requests.post(
             f"{BENTOML_URL}/predict",
-            json=input_array.tolist(),
+            json={
+                "input_array": input_array.tolist(),
+                "task": task_name
+            },
             headers={"Content-Type": "application/json"},
             timeout=10,
         )
@@ -78,14 +81,24 @@ model_info = None
 if service_online:
     st.success("✅ BentoML service is **online**")
     model_info = _get_model_info()
-    if model_info:
+    
+    if model_info and "tasks" in model_info:
+        tasks = list(model_info["tasks"].keys())
+        selected_task = st.selectbox("Select Task for Inference:", options=tasks)
+        
+        task_data = model_info["tasks"][selected_task]
+        
         col1, col2, col3 = st.columns(3)
-        col1.metric("Model", model_info.get("model_type", "?"))
-        col2.metric("Task", model_info.get("task", "?"))
-        col3.metric("Classes", model_info.get("num_classes", "?"))
+        col1.metric("Model", task_data.get("model_type", "?"))
+        col2.metric("Task", selected_task)
+        col3.metric("Classes", task_data.get("num_classes", "?"))
 
         with st.expander("📋 Full Model Info"):
             st.json(model_info)
+    else:
+        st.warning("Connected, but could not retrieve task info.")
+        selected_task = "activity_recognition"
+        task_data = {}
 else:
     st.error(
         "❌ BentoML service is **offline**. Start it with:\n\n"
@@ -94,6 +107,8 @@ else:
         "bentoml serve serving.service:MotionClassifier --reload\n"
         "```"
     )
+    selected_task = "activity_recognition"
+    task_data = {}
 
 st.divider()
 
@@ -127,10 +142,10 @@ with tab_upload:
 
             if st.button("🚀 Run Prediction", key="btn_upload") and service_online:
                 input_array = df[selected_features].values.astype(np.float32)
-                with st.spinner("Sending to BentoML..."):
-                    result = _predict(input_array)
+                with st.spinner(f"Sending to BentoML for {selected_task}..."):
+                    result = _predict(selected_task, input_array)
                 if result and "error" not in result:
-                    st.success(f"**Prediction:** `{result['prediction']}`  |  **Confidence:** `{result['confidence']:.2%}`")
+                    st.success(f"**Prediction:** `{result.get('prediction', 'Unknown')}`  |  **Confidence:** `{result.get('confidence', 0):.2%}`")
 
                     # Probability bar chart
                     probs = result.get("probabilities", {})
@@ -149,9 +164,9 @@ with tab_upload:
 with tab_random:
     st.markdown("Generate a random input array to test the service.")
 
-    if model_info:
-        n_features = model_info.get("input_features", 30)
-        pad_len = model_info.get("pad_target_len", 60)
+    if task_data:
+        n_features = task_data.get("input_features", 30)
+        pad_len = task_data.get("pad_target_len", 60)
     else:
         n_features = st.number_input("Number of features", value=30, min_value=1, key="rand_features")
         pad_len = 60
@@ -162,11 +177,11 @@ with tab_random:
         random_input = np.random.randn(seq_len, n_features).astype(np.float32)
         st.caption(f"Generated random array: shape ({seq_len}, {n_features})")
 
-        with st.spinner("Sending to BentoML..."):
-            result = _predict(random_input)
+        with st.spinner(f"Sending to BentoML for {selected_task}..."):
+            result = _predict(selected_task, random_input)
 
         if result and "error" not in result:
-            st.success(f"**Prediction:** `{result['prediction']}`  |  **Confidence:** `{result['confidence']:.2%}`")
+            st.success(f"**Prediction:** `{result.get('prediction', 'Unknown')}`  |  **Confidence:** `{result.get('confidence', 0):.2%}`")
 
             probs = result.get("probabilities", {})
             if probs:
@@ -195,10 +210,10 @@ with tab_manual:
                 st.error(f"Expected 2D array, got {parsed.ndim}D")
             else:
                 st.caption(f"Parsed array shape: {parsed.shape}")
-                with st.spinner("Sending to BentoML..."):
-                    result = _predict(parsed)
+                with st.spinner(f"Sending to BentoML for {selected_task}..."):
+                    result = _predict(selected_task, parsed)
                 if result and "error" not in result:
-                    st.success(f"**Prediction:** `{result['prediction']}`  |  **Confidence:** `{result['confidence']:.2%}`")
+                    st.success(f"**Prediction:** `{result.get('prediction', 'Unknown')}`  |  **Confidence:** `{result.get('confidence', 0):.2%}`")
                     probs = result.get("probabilities", {})
                     if probs:
                         prob_df = pd.DataFrame(
