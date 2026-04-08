@@ -98,33 +98,54 @@ def get_feature_columns(df):
         raise ValueError(f"Missing feature columns: {missing_str}")
     return FEATURE_COLS
 
-def merge_velocity_and_acceleration(df):
-    vel_df = df[df["sensor_type"] == "Segment Velocity"].copy()
-    acc_df = df[df["sensor_type"] == "Segment Acceleration"].copy()
+def merge_sensors(df, sensor_types):
+    if not sensor_types:
+        raise ValueError("No sensor_types provided.")
 
-    if vel_df.empty or acc_df.empty:
-        raise ValueError("Both Segment Velocity and Segment Acceleration rows are required.")
+    sensor_dfs = {}
+    for stype in sensor_types:
+        sdf = df[df["sensor_type"] == stype].copy()
+        if len(sdf) == 0:
+            print(f"[Warning] No data found for sensor_type: {stype}", flush=True)
+        sensor_dfs[stype] = sdf
 
-    base_feature_cols = get_feature_columns(vel_df)
+    if all(len(sdf) == 0 for sdf in sensor_dfs.values()):
+        raise ValueError("No matching rows found for any of the requested sensor types.")
+
+    def get_suffix(stype):
+        return "_" + stype.split()[-1][:3].lower()
+
+    base_stype = sensor_types[0]
+    base_df = sensor_dfs[base_stype]
+
+    if base_df.empty:
+        raise ValueError(f"Base sensor type '{base_stype}' has no data, unable to perform merges.")
+
+    base_feature_cols = get_feature_columns(base_df)
 
     id_cols = [
         c for c in ["video_id", "Frame", "Label", "person_id", "activity_type", "knife_sharpness_score", "sharpness_class"]
-        if c in vel_df.columns
+        if c in base_df.columns
     ]
 
-    vel_df = vel_df[id_cols + base_feature_cols].rename(
-        columns={c: f"{c}_vel" for c in base_feature_cols}
-    )
-    acc_df = acc_df[["video_id", "Frame"] + base_feature_cols].rename(
-        columns={c: f"{c}_acc" for c in base_feature_cols}
+    merged_df = base_df[id_cols + base_feature_cols].rename(
+        columns={c: f"{c}{get_suffix(base_stype)}" for c in base_feature_cols}
     )
 
-    merged_df = vel_df.merge(
-        acc_df,
-        on=["video_id", "Frame"],
-        how="inner",
-        validate="one_to_one",
-    )
+    for stype in sensor_types[1:]:
+        sdf = sensor_dfs[stype]
+        if sdf.empty:
+            continue
+        sdf = sdf[["video_id", "Frame"] + base_feature_cols].rename(
+            columns={c: f"{c}{get_suffix(stype)}" for c in base_feature_cols}
+        )
+        merged_df = merged_df.merge(
+            sdf,
+            on=["video_id", "Frame"],
+            how="inner",
+            validate="one_to_one",
+        )
+
     return merged_df, base_feature_cols
 
 def engineer_features(combined_df, base_feature_cols):
@@ -137,35 +158,37 @@ def engineer_features(combined_df, base_feature_cols):
     segment_names = list(dict.fromkeys(segment_names))
     engineered_cols = {}
 
-    velocity_mag_feature_cols = []
-    acceleration_mag_feature_cols = []
+    active_suffixes = set()
+    for col in combined_df.columns:
+        if " x_" in col:
+            active_suffixes.add(col.split("_")[-1])
+
+    mag_feature_cols = []
+
     for seg in segment_names:
-        vx_col, vy_col, vz_col = f"{seg} x_vel", f"{seg} y_vel", f"{seg} z_vel"
-        ax_col, ay_col, az_col = f"{seg} x_acc", f"{seg} y_acc", f"{seg} z_acc"
-
-        vel_mag_col = f"{seg}_vel_mag"
-        acc_mag_col = f"{seg}_acc_mag"
-
-        engineered_cols[vel_mag_col] = np.sqrt(
-            combined_df[vx_col] ** 2 + combined_df[vy_col] ** 2 + combined_df[vz_col] ** 2
-        )
-        engineered_cols[acc_mag_col] = np.sqrt(
-            combined_df[ax_col] ** 2 + combined_df[ay_col] ** 2 + combined_df[az_col] ** 2
-        )
-        velocity_mag_feature_cols.append(vel_mag_col)
-        acceleration_mag_feature_cols.append(acc_mag_col)
+        for suffix in active_suffixes:
+            x_col, y_col, z_col = f"{seg} x_{suffix}", f"{seg} y_{suffix}", f"{seg} z_{suffix}"
+            if x_col in combined_df.columns and y_col in combined_df.columns and z_col in combined_df.columns:
+                mag_col = f"{seg}_{suffix}_mag"
+                engineered_cols[mag_col] = np.sqrt(
+                    combined_df[x_col] ** 2 + combined_df[y_col] ** 2 + combined_df[z_col] ** 2
+                )
+                mag_feature_cols.append(mag_col)
 
     energy_terms = []
     for seg in segment_names:
-        energy_terms.extend([
-            combined_df[f"{seg} x_vel"] ** 2,
-            combined_df[f"{seg} y_vel"] ** 2,
-            combined_df[f"{seg} z_vel"] ** 2,
-            combined_df[f"{seg} x_acc"] ** 2,
-            combined_df[f"{seg} y_acc"] ** 2,
-            combined_df[f"{seg} z_acc"] ** 2,
-        ])
-    engineered_cols["total_body_energy"] = np.sum(np.column_stack(energy_terms), axis=1)
+        for suffix in active_suffixes:
+            if suffix in ["vel", "acc"]:
+                x_col, y_col, z_col = f"{seg} x_{suffix}", f"{seg} y_{suffix}", f"{seg} z_{suffix}"
+                if x_col in combined_df:
+                    energy_terms.extend([
+                        combined_df[x_col] ** 2,
+                        combined_df[y_col] ** 2,
+                        combined_df[z_col] ** 2,
+                    ])
+                    
+    if energy_terms:
+        engineered_cols["total_body_energy"] = np.sum(np.column_stack(energy_terms), axis=1)
 
     arm_joints = [seg for seg in segment_names if any(k in seg for k in ["Shoulder", "Upper Arm", "Forearm", "Hand"])]
     leg_joints = [seg for seg in segment_names if any(k in seg for k in ["Upper Leg", "Lower Leg", "Foot", "Toe"])]
@@ -179,58 +202,61 @@ def engineer_features(combined_df, base_feature_cols):
 
     pair_suffixes = [("x", "y", "xy"), ("x", "z", "xz"), ("y", "z", "yz")]
     pair_feature_cols = []
+    
     for seg in arm_leg_joints:
         for a1, a2, pair_name in pair_suffixes:
-            vel_pair_col = f"{seg}_vel_{pair_name}"
-            acc_pair_col = f"{seg}_acc_{pair_name}"
-            engineered_cols[vel_pair_col] = np.sqrt(combined_df[f"{seg} {a1}_vel"] ** 2 + combined_df[f"{seg} {a2}_vel"] ** 2)
-            engineered_cols[acc_pair_col] = np.sqrt(combined_df[f"{seg} {a1}_acc"] ** 2 + combined_df[f"{seg} {a2}_acc"] ** 2)
-            pair_feature_cols.extend([vel_pair_col, acc_pair_col])
+            for suffix in active_suffixes:
+                pair_col = f"{seg}_{suffix}_{pair_name}"
+                c1, c2 = f"{seg} {a1}_{suffix}", f"{seg} {a2}_{suffix}"
+                if c1 in combined_df and c2 in combined_df:
+                    engineered_cols[pair_col] = np.sqrt(combined_df[c1] ** 2 + combined_df[c2] ** 2)
+                    pair_feature_cols.append(pair_col)
 
-    def group_energy(df, joints):
-        if len(joints) == 0:
-            return pd.Series(np.zeros(len(df)), index=df.index)
-        terms = []
-        for seg in joints:
-            terms.extend([
-                df[f"{seg} x_vel"] ** 2, df[f"{seg} y_vel"] ** 2, df[f"{seg} z_vel"] ** 2,
-                df[f"{seg} x_acc"] ** 2, df[f"{seg} y_acc"] ** 2, df[f"{seg} z_acc"] ** 2,
-            ])
-        return np.sum(np.column_stack(terms), axis=1)
+    energy_distribution_feature_cols = []
+    
+    if "vel" in active_suffixes or "acc" in active_suffixes:
+        def group_energy(df, joints):
+            if len(joints) == 0:
+                return pd.Series(np.zeros(len(df)), index=df.index)
+            terms = []
+            for seg in joints:
+                for suffix in ["vel", "acc"]:
+                    if suffix in active_suffixes:
+                        terms.extend([
+                            df[f"{seg} x_{suffix}"] ** 2, df[f"{seg} y_{suffix}"] ** 2, df[f"{seg} z_{suffix}"] ** 2
+                        ])
+            return np.sum(np.column_stack(terms), axis=1)
 
-    upper_energy = group_energy(combined_df, upper_body_joints)
-    lower_energy = group_energy(combined_df, lower_body_joints)
-    left_energy = group_energy(combined_df, left_body_joints)
-    right_energy = group_energy(combined_df, right_body_joints)
+        upper_energy = group_energy(combined_df, upper_body_joints)
+        lower_energy = group_energy(combined_df, lower_body_joints)
+        left_energy = group_energy(combined_df, left_body_joints)
+        right_energy = group_energy(combined_df, right_body_joints)
 
-    engineered_cols["upper_body_energy"] = upper_energy
-    engineered_cols["lower_body_energy"] = lower_energy
-    engineered_cols["left_body_energy"] = left_energy
-    engineered_cols["right_body_energy"] = right_energy
+        engineered_cols["upper_body_energy"] = upper_energy
+        engineered_cols["lower_body_energy"] = lower_energy
+        engineered_cols["left_body_energy"] = left_energy
+        engineered_cols["right_body_energy"] = right_energy
 
-    eps = 1e-8
-    ul_denom = upper_energy + lower_energy + eps
-    lr_denom = left_energy + right_energy + eps
+        eps = 1e-8
+        ul_denom = upper_energy + lower_energy + eps
+        lr_denom = left_energy + right_energy + eps
 
-    engineered_cols["upper_energy_ratio"] = upper_energy / ul_denom
-    engineered_cols["lower_energy_ratio"] = lower_energy / ul_denom
-    engineered_cols["left_energy_ratio"] = left_energy / lr_denom
-    engineered_cols["right_energy_ratio"] = right_energy / lr_denom
+        engineered_cols["upper_energy_ratio"] = upper_energy / ul_denom
+        engineered_cols["lower_energy_ratio"] = lower_energy / ul_denom
+        engineered_cols["left_energy_ratio"] = left_energy / lr_denom
+        engineered_cols["right_energy_ratio"] = right_energy / lr_denom
 
-    energy_distribution_feature_cols = [
-        "upper_energy_ratio", "lower_energy_ratio",
-        "left_energy_ratio", "right_energy_ratio",
-    ]
+        energy_distribution_feature_cols = [
+            "upper_energy_ratio", "lower_energy_ratio",
+            "left_energy_ratio", "right_energy_ratio",
+        ]
 
     combined_df = pd.concat([combined_df, pd.DataFrame(engineered_cols)], axis=1)
 
-    feature_cols = (
-        velocity_mag_feature_cols
-        + acceleration_mag_feature_cols
-        + ["total_body_energy"]
-        + pair_feature_cols
-        + energy_distribution_feature_cols
-    )
+    feature_cols = mag_feature_cols + pair_feature_cols + energy_distribution_feature_cols
+    if "total_body_energy" in engineered_cols:
+        feature_cols.append("total_body_energy")
+        
     return combined_df, feature_cols
 
 def create_windows(

@@ -12,7 +12,9 @@ data:
   stride: 30
   pad_target_len: 60
   batch_size: 32
-  sensor_type: "Segment Velocity"
+  sensor_types:
+    - "Segment Velocity"
+    - "Segment Acceleration"
   video_suffix: null
   num_workers: 0
   val_split: 0.2

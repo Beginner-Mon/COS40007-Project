@@ -18,7 +18,7 @@ from data.preprocessing import (
     get_feature_columns,
     create_windows,
     clean_features,
-    merge_velocity_and_acceleration,
+    merge_sensors,
     engineer_features,
     pad_windows_to_60,
     derive_sharpness_class,
@@ -43,8 +43,11 @@ def main(cfg: DictConfig):
     DATA_DIR = PROJECT_ROOT / "output_data"
 
     # MLflow Setup
+    sensor_types = list(cfg.data.get("sensor_types", ["Segment Velocity", "Segment Acceleration"]))
+    sensor_suffix = "_".join(sorted([s.split()[-1][:3].lower() for s in sensor_types]))
+    experiment_name = f"{cfg.task.name}_{sensor_suffix}"
+    
     mlflow.set_tracking_uri(cfg.mlflow.tracking_uri)
-    experiment_name = cfg.task.name
     mlflow.set_experiment(experiment_name)
 
     # Start run early so failed attempts are still visible in MLflow UI.
@@ -63,11 +66,18 @@ def main(cfg: DictConfig):
         # ======================================================
         print("[phase=data] Loading CSV files...", flush=True)
         dfs = []
+        load_position = "Segment Position" in sensor_types
+
         for pid in ["P1", "P2"]:
             for act in ["boning", "slicing"]:
                 csv_path = DATA_DIR / f"{pid}_{act}.csv"
                 if csv_path.exists():
                     dfs.append(pd.read_csv(csv_path, low_memory=False))
+                
+                if load_position:
+                    pos_path = DATA_DIR / f"{pid}_{act}_segment_position.csv"
+                    if pos_path.exists():
+                        dfs.append(pd.read_csv(pos_path, low_memory=False))
 
         if not dfs:
             raise FileNotFoundError(f"No CSV files found in {DATA_DIR}. Run `python -m data.loader` first.")
@@ -75,7 +85,7 @@ def main(cfg: DictConfig):
         raw_df = pd.concat(dfs, ignore_index=True)
 
         # 1. Merge Sensors
-        merged_df, base_feature_cols = merge_velocity_and_acceleration(raw_df)
+        merged_df, base_feature_cols = merge_sensors(raw_df, sensor_types)
 
         # 2. Map and Filter Labels
         merged_df = clean_labels(merged_df)

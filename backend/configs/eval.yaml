@@ -5,7 +5,9 @@ model_path: models/best.pt
 artifacts_dir: artifacts/shared
 
 data:
-  sensor_type: "Segment Velocity"
+  sensor_types: 
+    - "Segment Velocity"
+    - "Segment Acceleration"
   video_suffix: null
   window_size: 60
   stride: 30
